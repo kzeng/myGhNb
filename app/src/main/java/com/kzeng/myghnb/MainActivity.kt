@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
@@ -13,6 +14,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -170,6 +173,7 @@ private fun MyGhNbTheme(dark: Boolean, content: @Composable () -> Unit) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onRefresh: () -> Unit, onOpen: (Note) -> Unit, onEdit: (Note) -> Unit) {
     var section by remember { mutableStateOf("all") }
     var query by remember { mutableStateOf("") }
@@ -193,10 +197,10 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
             if (loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) else IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "同步") }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { section = "all"; selectedTag = null }) { Icon(Icons.Default.MenuBook, null); Spacer(Modifier.size(4.dp)); Text("全部") }
-            OutlinedButton(onClick = { section = "tags" }) { Icon(Icons.Default.Label, null); Spacer(Modifier.size(4.dp)); Text("标签") }
-            OutlinedButton(onClick = { section = "archive"; selectedTag = null }) { Icon(Icons.Default.Archive, null); Spacer(Modifier.size(4.dp)); Text("归档") }
-            OutlinedButton(onClick = { section = "search" }) { Icon(Icons.Default.Search, null); Spacer(Modifier.size(4.dp)); Text("查找") }
+            IconButton(onClick = { section = "all"; selectedTag = null }) { Icon(Icons.Default.MenuBook, contentDescription = "全部文章") }
+            IconButton(onClick = { section = "tags" }) { Icon(Icons.Default.Label, contentDescription = "标签") }
+            IconButton(onClick = { section = "archive"; selectedTag = null }) { Icon(Icons.Default.Archive, contentDescription = "归档") }
+            IconButton(onClick = { section = "search" }) { Icon(Icons.Default.Search, contentDescription = "查找") }
         }
         if (section == "search") {
             Spacer(Modifier.height(8.dp))
@@ -204,8 +208,12 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
         }
         if (section == "tags") {
             Spacer(Modifier.height(8.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                allTags.take(6).forEach { tag -> OutlinedButton(onClick = { selectedTag = if (selectedTag == tag) null else tag }) { Text(tag) } }
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                allTags.forEach { tag -> OutlinedButton(onClick = { selectedTag = if (selectedTag == tag) null else tag }) { Text(tag) } }
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -385,7 +393,10 @@ private fun saveFromEditor(initial: Note, title: String, body: String, mode: Str
 
 private fun markdownToHtml(markdown: String, editable: Boolean = false): String {
     var html = markdown.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    html = Regex("!\\[([^]]*)]\\(([^)]+)\\)").replace(html) { "<img src=\"${it.groupValues[2]}\" alt=\"${it.groupValues[1]}\" style=\"max-width:100%;height:auto\"/>" }
+    html = Regex("!\\[([^]]*)]\\(([^)]+)\\)").replace(html) {
+        val imageUrl = it.groupValues[2].trim().replace("http://", "https://")
+        "<img src=\"$imageUrl\" alt=\"${it.groupValues[1]}\" loading=\"lazy\" style=\"display:block;max-width:100%;height:auto\"/>"
+    }
     html = Regex("(?m)^### (.+)$").replace(html, "<h3>$1</h3>")
     html = Regex("(?m)^## (.+)$").replace(html, "<h2>$1</h2>")
     html = Regex("(?m)^# (.+)$").replace(html, "<h1>$1</h1>")
@@ -423,15 +434,22 @@ private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layo
             modifier = Modifier.fillMaxWidth().weight(1f),
             factory = { context ->
                 WebView(context).apply {
-                    webViewClient = WebViewClient()
-                    settings.javaScriptEnabled = false
-                    settings.domStorageEnabled = false
+                    configureArticleWebView()
                     loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(note.body), "text/html", "UTF-8", null)
                 }
-            },
-            update = { it.loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(note.body), "text/html", "UTF-8", null) }
+            }
         )
     }
+}
+
+private fun WebView.configureArticleWebView() {
+    webViewClient = WebViewClient()
+    settings.javaScriptEnabled = false
+    settings.domStorageEnabled = true
+    settings.loadsImagesAutomatically = true
+    settings.blockNetworkImage = false
+    settings.cacheMode = WebSettings.LOAD_DEFAULT
+    settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
 }
 
 @Composable
