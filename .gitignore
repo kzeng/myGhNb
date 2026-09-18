@@ -13,6 +13,7 @@ local.properties
 *.jks
 *.keystore
 keystore.properties
+*.log
 
 # Generated files
 captures/

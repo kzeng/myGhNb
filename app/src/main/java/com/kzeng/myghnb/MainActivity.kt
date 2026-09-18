@@ -84,11 +84,13 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MyGhNbApp() {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("settings", 0) }
-    var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", isSystemInDarkTheme())) }
+    val systemDarkTheme = isSystemInDarkTheme()
+    var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", systemDarkTheme)) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var screen by remember { mutableStateOf("home") }
@@ -134,7 +136,7 @@ fun MyGhNbApp() {
                 notes = notes.filterNot { n -> n.fileName == it.fileName } + it
                 saveDrafts(context, notes)
                 selected = it
-                snackbar.showSnackbar("草稿已保存")
+                scope.launch { snackbar.showSnackbar("草稿已保存") }
             }, onPublish = { note ->
                 loading = true
                 scope.launch {

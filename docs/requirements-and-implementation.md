@@ -164,11 +164,21 @@
 ## 6. 当前状态与已知限制
 
 - 项目文件已经创建在指定目录。
-- 本机 Gradle 可用，但当前环境缺少可用的 Android SDK 配置，尚未生成 APK。
+- 已使用本机 Android SDK 35、JDK 17 和 Gradle 8.8 成功构建 Debug APK。
+- APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
+- 包名：`com.kzeng.myghnb`；版本：`0.0.1`。
 - 当前详情页可以显示 Markdown 原文，完整 Markdown 渲染仍需补充。
 - 当前图片流程提供打开 imgchr 和粘贴链接入口，返回 App 后自动识别剪贴板仍可增强。
 - GitHub 发布需要用户在 About 页面配置有效的 Fine-grained Token。
 - 未保存或记录任何图床账号密码。
+
+构建命令：
+
+```powershell
+$env:ANDROID_SDK_ROOT = "C:\Work\Apps\android-sdk"
+$env:JAVA_HOME = "C:\Work\Apps\openjdk-17.0.0.1+2_windows-x64_bin\jdk-17.0.0.1"
+& "C:\Work\Apps\gradle-8.8-bin\gradle-8.8\bin\gradle.bat" :app:assembleDebug
+```
 
 ## 7. 安全约束
 
