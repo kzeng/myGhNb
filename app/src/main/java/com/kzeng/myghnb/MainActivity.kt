@@ -34,9 +34,14 @@ import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -80,7 +85,7 @@ import java.io.IOException
 import java.net.URL
 import java.time.LocalDate
 
-data class Note(val fileName: String, val title: String, val date: String, val body: String = "", val sha: String? = null)
+data class Note(val fileName: String, val title: String, val date: String, val body: String = "", val sha: String? = null, val tags: List<String> = emptyList())
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,7 +104,7 @@ fun MyGhNbApp() {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var screen by remember { mutableStateOf("home") }
-    var notes by remember { mutableStateOf(loadDrafts(context)) }
+    var notes by remember { mutableStateOf(loadNotes(context)) }
     var selected by remember { mutableStateOf<Note?>(null) }
     var loading by remember { mutableStateOf(false) }
 
@@ -114,29 +119,32 @@ fun MyGhNbApp() {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = { Text(if (screen == "editor") "编辑文章" else if (screen == "about") "About" else "My GH Notebook", fontWeight = FontWeight.SemiBold) },
                 navigationIcon = { if (screen != "home") IconButton(onClick = { screen = "home" }) { Icon(Icons.Default.ArrowBack, "返回") } },
                 actions = { if (screen == "home") {
                     IconButton(onClick = { darkTheme = !darkTheme; settings.edit().putBoolean("dark_theme", darkTheme).apply() }) { Icon(if (darkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, "切换主题") }
                     IconButton(onClick = { screen = "about" }) { Icon(Icons.Default.Info, "About") }
                 } },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         },
         floatingActionButton = { if (screen == "home") FloatingActionButton(onClick = ::newNote) { Icon(Icons.Default.Add, "新建") } }
     ) { padding ->
         when (screen) {
-            "home" -> HomeScreen(notes, loading, padding, onRefresh = {
+            "home" -> HomeScreenV3(notes, loading, padding, onRefresh = {
                 loading = true
                 scope.launch {
                     val result = withContext(Dispatchers.IO) { GitHubClient.fetchNotes(context) }
-                    if (result.isNotEmpty()) notes = result
+                    if (result.isNotEmpty()) {
+                        saveCachedNotes(context, result)
+                        notes = mergeNotes(loadDrafts(context), result)
+                    }
                     loading = false
                     snackbar.showSnackbar(if (result.isEmpty()) "同步失败或暂无文章" else "已同步 ${result.size} 篇文章")
                 }
             }, onOpen = { selected = it; screen = "reader" }, onEdit = { selected = it; screen = "editor" })
-            "reader" -> ReaderScreen(selected ?: Note("", "", ""), padding)
+            "reader" -> ReaderScreenV2(selected ?: Note("", "", ""), padding)
             "editor" -> EditorScreenV2(selected ?: Note("", "", ""), padding, onSave = {
                 notes = notes.filterNot { n -> n.fileName == it.fileName } + it
                 saveDrafts(context, notes)
@@ -162,12 +170,112 @@ private fun MyGhNbTheme(dark: Boolean, content: @Composable () -> Unit) {
 }
 
 @Composable
+private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onRefresh: () -> Unit, onOpen: (Note) -> Unit, onEdit: (Note) -> Unit) {
+    var section by remember { mutableStateOf("all") }
+    var query by remember { mutableStateOf("") }
+    var selectedTag by remember { mutableStateOf<String?>(null) }
+    var page by remember(section, query, selectedTag, notes.size) { mutableStateOf(0) }
+    val sorted = notes.sortedWith(compareByDescending<Note> { it.date }.thenByDescending { it.fileName })
+    val allTags = sorted.flatMap { it.tags }.distinct().sorted()
+    val filtered = when (section) {
+        "search" -> sorted.filter { query.isBlank() || it.title.contains(query, true) || it.body.contains(query, true) || it.fileName.contains(query, true) }
+        "tags" -> sorted.filter { selectedTag == null || selectedTag in it.tags }
+        else -> sorted
+    }
+    val pageSize = 10
+    val pageCount = maxOf(1, (filtered.size + pageSize - 1) / pageSize)
+    if (page >= pageCount) page = pageCount - 1
+    val pageItems = filtered.drop(page * pageSize).take(pageSize)
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text("全部文章", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            if (loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) else IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "同步") }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { section = "all"; selectedTag = null }) { Icon(Icons.Default.MenuBook, null); Spacer(Modifier.size(4.dp)); Text("全部") }
+            OutlinedButton(onClick = { section = "tags" }) { Icon(Icons.Default.Label, null); Spacer(Modifier.size(4.dp)); Text("标签") }
+            OutlinedButton(onClick = { section = "archive"; selectedTag = null }) { Icon(Icons.Default.Archive, null); Spacer(Modifier.size(4.dp)); Text("归档") }
+            OutlinedButton(onClick = { section = "search" }) { Icon(Icons.Default.Search, null); Spacer(Modifier.size(4.dp)); Text("查找") }
+        }
+        if (section == "search") {
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(), label = { Text("查找文章") }, singleLine = true)
+        }
+        if (section == "tags") {
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                allTags.take(6).forEach { tag -> OutlinedButton(onClick = { selectedTag = if (selectedTag == tag) null else tag }) { Text(tag) } }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        if (pageItems.isEmpty()) Text("暂无匹配文章", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(pageItems) { note ->
+                Card(Modifier.fillMaxWidth().clickable { onOpen(note) }) {
+                    Column(Modifier.padding(16.dp)) {
+                        if (section == "archive") Text(note.date.take(7), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                        Text(note.title.ifBlank { "未命名" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("${note.date} · ${note.fileName}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { IconButton(onClick = { onEdit(note) }) { Icon(Icons.Default.Edit, "编辑文章") } }
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(enabled = page > 0, onClick = { page-- }) { Text("上一页") }
+            Text(" ${page + 1} / $pageCount ", modifier = Modifier.padding(horizontal = 8.dp))
+            OutlinedButton(enabled = page + 1 < pageCount, onClick = { page++ }) { Text("下一页") }
+        }
+    }
+}
+
+@Composable
+private fun HomeScreenV2(notes: List<Note>, loading: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onRefresh: () -> Unit, onOpen: (Note) -> Unit, onEdit: (Note) -> Unit) {
+    var page by remember(notes.size) { mutableStateOf(0) }
+    val pageSize = 10
+    val sorted = notes.sortedWith(compareByDescending<Note> { it.date }.thenByDescending { it.fileName })
+    val pageCount = maxOf(1, (sorted.size + pageSize - 1) / pageSize)
+    if (page >= pageCount) page = pageCount - 1
+    val pageItems = sorted.drop(page * pageSize).take(pageSize)
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
+        Spacer(Modifier.height(18.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column { Text("你的文章", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("GitHub · clash", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) else IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "同步") }
+        }
+        Spacer(Modifier.height(14.dp))
+        if (pageItems.isEmpty()) Text("还没有文章，点击右下角开始写作。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(pageItems) { note ->
+                Card(Modifier.fillMaxWidth().clickable { onOpen(note) }) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(note.title.ifBlank { "未命名" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text("${note.date} · ${note.fileName}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { IconButton(onClick = { onEdit(note) }) { Icon(Icons.Default.Edit, "编辑文章") } }
+                    }
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(enabled = page > 0, onClick = { page-- }) { Text("上一页") }
+            Text("  ${page + 1} / $pageCount  ", modifier = Modifier.padding(horizontal = 8.dp))
+            OutlinedButton(enabled = page + 1 < pageCount, onClick = { page++ }) { Text("下一页") }
+        }
+    }
+}
+
+@Composable
 private fun HomeScreen(notes: List<Note>, loading: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onRefresh: () -> Unit, onOpen: (Note) -> Unit, onEdit: (Note) -> Unit) {
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column { Text("你的文章", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("GitHub · clash", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            IconButton(onClick = onRefresh) { Icon(if (loading) Icons.Default.CloudDownload else Icons.Default.Refresh, "同步") }
+            if (loading) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "同步") }
+            }
         }
         Spacer(Modifier.height(14.dp))
         if (notes.isEmpty()) Text("还没有本地文章，点击右下角开始写作。", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -177,7 +285,7 @@ private fun HomeScreen(notes: List<Note>, loading: Boolean, padding: androidx.co
                     Column(Modifier.padding(16.dp)) {
                         Text(note.title.ifBlank { "未命名" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text("${note.date} · ${note.fileName}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Text("编辑", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { onEdit(note) }.padding(6.dp)) }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { IconButton(onClick = { onEdit(note) }) { Icon(Icons.Default.Edit, contentDescription = "编辑文章") } }
                     }
                 }
             }
@@ -305,6 +413,28 @@ private fun htmlToMarkdown(html: String): String = html
     .trim()
 
 @Composable
+private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layout.PaddingValues) {
+    Column(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
+            Text(note.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(note.date, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        AndroidView(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            factory = { context ->
+                WebView(context).apply {
+                    webViewClient = WebViewClient()
+                    settings.javaScriptEnabled = false
+                    settings.domStorageEnabled = false
+                    loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(note.body), "text/html", "UTF-8", null)
+                }
+            },
+            update = { it.loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(note.body), "text/html", "UTF-8", null) }
+        )
+    }
+}
+
+@Composable
 private fun ReaderScreen(note: Note, padding: androidx.compose.foundation.layout.PaddingValues) {
     Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
         Text(note.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -342,6 +472,29 @@ private fun loadDrafts(context: Context): List<Note> = runCatching {
     List(array.length()) { i -> val o = array.getJSONObject(i); Note(o.getString("file"), o.getString("title"), o.getString("date"), o.optString("body")) }
 }.getOrDefault(emptyList())
 
+private fun loadCachedNotes(context: Context): List<Note> = runCatching {
+    val array = JSONArray(context.getSharedPreferences("remote_cache", 0).getString("items", "[]"))
+    List(array.length()) { i -> val o = array.getJSONObject(i); Note(o.getString("file"), o.getString("title"), o.getString("date"), o.optString("body"), o.optString("sha").ifBlank { null }, o.optJSONArray("tags")?.let { a -> List(a.length()) { n -> a.getString(n) } } ?: emptyList()) }
+}.getOrDefault(emptyList())
+
+private fun saveCachedNotes(context: Context, notes: List<Note>) {
+    val array = JSONArray()
+    notes.forEach { array.put(JSONObject().apply { put("file", it.fileName); put("title", it.title); put("date", it.date); put("body", it.body); put("sha", it.sha ?: ""); put("tags", JSONArray(it.tags)) }) }
+    context.getSharedPreferences("remote_cache", 0).edit().putString("items", array.toString()).apply()
+}
+
+private fun mergeNotes(drafts: List<Note>, remote: List<Note>): List<Note> {
+    val byFile = (remote + drafts).associateBy { it.fileName }
+    return byFile.values.toList()
+}
+
+private fun loadNotes(context: Context): List<Note> = mergeNotes(loadDrafts(context), loadCachedNotes(context))
+
+private fun parseTags(raw: String): List<String> = Regex("(?m)^tags:\\s*\\[([^]]*)]").find(raw)?.groupValues?.get(1).orEmpty()
+    .split(',', '、')
+    .map { it.trim().trim('"', '\'') }
+    .filter { it.isNotBlank() }
+
 private fun saveDrafts(context: Context, notes: List<Note>) {
     val array = JSONArray(); notes.forEach { array.put(JSONObject().apply { put("file", it.fileName); put("title", it.title); put("date", it.date); put("body", it.body) }) }
     context.getSharedPreferences("drafts", 0).edit().putString("items", array.toString()).apply()
@@ -366,8 +519,8 @@ private object GitHubClient {
             val title = Regex("(?m)^title:\\s*[\\\"']?(.*?)[\\\"']?\\s*$").find(raw)?.groupValues?.get(1)?.trim().orEmpty().ifBlank { o.getString("name").removeSuffix(".md") }
             val date = Regex("(?m)^date:\\s*(\\d{4}-\\d{2}-\\d{2})").find(raw)?.groupValues?.get(1).orEmpty()
             val body = raw.substringAfter("---", "").substringAfter("---", "").trim()
-            Note(o.getString("name"), title, date, body, sha = o.optString("sha"))
-        }
+            Note(o.getString("name"), title, date, body, sha = o.optString("sha"), tags = parseTags(raw))
+        }.filterNot { it.fileName == "_index.md" }
     }.getOrDefault(emptyList()) }
     suspend fun publish(context: Context, note: Note): Boolean = withContext(Dispatchers.IO) { runCatching {
         val path = "$repo/${note.fileName}?ref=clash"; val check = connection(context, path); val existing = if (check.responseCode == 200) JSONObject(check.inputStream.bufferedReader().readText()).optString("sha") else null
