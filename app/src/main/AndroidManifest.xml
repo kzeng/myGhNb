@@ -4,7 +4,7 @@
         android:allowBackup="true"
         android:label="My GH Notebook"
         android:theme="@style/Theme.MyGhNb"
-        android:icon="@drawable/ic_launcher_logo">
+        android:icon="@drawable/my_gh_nb_logo">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -180,7 +180,17 @@ $env:JAVA_HOME = "C:\Work\Apps\openjdk-17.0.0.1+2_windows-x64_bin\jdk-17.0.0.1"
 & "C:\Work\Apps\gradle-8.8-bin\gradle-8.8\bin\gradle.bat" :app:assembleDebug
 ```
 
-## 7. 安全约束
+## 7. Latest implementation update
+
+- The editor now provides Code, WYSIWYG, and Preview modes.
+- WYSIWYG mode supports basic headings, bold, italic, and images, then converts the result back to Markdown when saving or publishing.
+- The editor includes a dedicated Preview article button.
+- GitHub sync is executed through the IO dispatcher to avoid Android main-thread network failures.
+- GitHub requests now trim the token, send a User-Agent, and handle HTTP errors more safely.
+- The user-provided GitHub Notebook image is used for the app icon, About page logo, and Android 12 splash logo.
+- The latest Debug APK was built successfully with Gradle 8.8, AGP 8.6.1, JDK 17, and compileSdk 35.
+
+## 8. 安全约束
 
 - 不在源码、README、日志或 Git 历史中保存密码。
 - 不把 GitHub Token 写入源码或提交到仓库。
