@@ -396,7 +396,7 @@ private fun saveFromEditor(initial: Note, title: String, body: String, mode: Str
 
 private fun markdownToHtml(markdown: String, editable: Boolean = false): String {
     val imageHtml = mutableListOf<String>()
-    val imagePattern = Regex("""!\\[([^]]*)]\\(\\s*(?:<([^>]+)>|([^\\s)]+))(?:\\s+[\"'][^)]*[\"'])?\\s*\\)""")
+    val imagePattern = Regex("""!\[([^]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+[\"'][^)]*[\"'])?\s*\)""")
     val markdownWithImageTokens = imagePattern.replace(markdown) {
         val imageUrl = (it.groupValues[2].ifBlank { it.groupValues[3] }).trim().replace("http://", "https://")
         val alt = it.groupValues[1]
