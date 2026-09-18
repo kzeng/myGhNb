@@ -179,7 +179,7 @@ fun MyGhNbApp() {
                     snackbar.showSnackbar(if (result.isEmpty()) "同步失败或暂无文章" else "已同步 ${result.size} 篇文章")
                 }
             }, onOpen = { selected = it; screen = "reader" }, onEdit = { selected = it; screen = "editor" })
-            "reader" -> ReaderScreenV2(selected ?: Note("", "", ""), padding)
+            "reader" -> ReaderScreenV2(selected ?: Note("", "", ""), darkTheme, padding)
             "editor" -> EditorScreenV2(selected ?: Note("", "", ""), darkTheme, padding, onSave = {
                 notes = notes.filterNot { n -> n.fileName == it.fileName } + it
                 saveDrafts(context, notes)
@@ -532,7 +532,7 @@ private fun MarkdownToolbar(
         IconButton(onClick = { applyMarkdownTool("link", mode, visualEditor, onBodyChange) }) {
             Icon(Icons.Default.Link, contentDescription = "链接")
         }
-        Text("Code", style = MaterialTheme.typography.labelLarge)
+        Text("源码", style = MaterialTheme.typography.labelLarge)
         Switch(
             checked = mode == "code",
             onCheckedChange = { onModeChange(if (it) "code" else "visual") }
@@ -594,6 +594,7 @@ private fun saveFromEditor(initial: Note, title: String, body: String, tags: Lis
 
 private fun markdownToHtml(markdown: String, editable: Boolean = false, dark: Boolean = false): String {
     val imageHtml = mutableListOf<String>()
+    val codeHtml = mutableListOf<String>()
     fun imageToken(altText: String, source: String): String {
         val imageUrl = source.trim().let { url -> if (url.startsWith("//")) "https:$url" else url }
         val alt = altText.replace("&", "&amp;").replace("\"", "&quot;")
@@ -610,8 +611,18 @@ private fun markdownToHtml(markdown: String, editable: Boolean = false, dark: Bo
     markdownWithImageTokens = imagePattern.replace(markdownWithImageTokens) {
         imageToken(it.groupValues[1], it.groupValues[2].ifBlank { it.groupValues[3] })
     }
+    val fencedCodePattern = Regex("""(?s)```([^\n`]*)\n?(.*?)```""")
+    markdownWithImageTokens = fencedCodePattern.replace(markdownWithImageTokens) {
+        val language = it.groupValues[1].trim()
+        val source = it.groupValues[2].trim('\n')
+        val token = "MYGHNB_CODE_TOKEN_${codeHtml.size}"
+        val languageClass = language.takeIf { it.isNotBlank() }?.let { " class=\"language-$it\"" }.orEmpty()
+        codeHtml += "<pre><code$languageClass>${highlightCode(source, language)}</code></pre>"
+        token
+    }
     var html = markdownWithImageTokens.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     imageHtml.forEachIndexed { index, image -> html = html.replace("MYGHNB_IMAGE_TOKEN_$index", image) }
+    codeHtml.forEachIndexed { index, code -> html = html.replace("MYGHNB_CODE_TOKEN_$index", code) }
     html = Regex("(?m)^### (.+)$").replace(html, "<h3>$1</h3>")
     html = Regex("(?m)^## (.+)$").replace(html, "<h2>$1</h2>")
     html = Regex("(?m)^# (.+)$").replace(html, "<h1>$1</h1>")
@@ -623,29 +634,75 @@ private fun markdownToHtml(markdown: String, editable: Boolean = false, dark: Bo
     val foreground = if (dark) "#F4EFF4" else "#202124"
     val link = if (dark) "#D0BCFF" else "#6750A4"
     val selection = if (dark) "#4F378B" else "#D0BCFF"
-    return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>:root{color-scheme:${if (dark) "dark" else "light"}}body{font-family:sans-serif;padding:16px;line-height:1.65;color:$foreground;background:$background;caret-color:$foreground}body::selection{background:$selection}a{color:$link}img{display:block;margin:12px 0;max-width:100%;height:auto}h1,h2,h3{line-height:1.25}</style></head><body$edit><p>$html</p></body></html>"
+    val codeBackground = if (dark) "#2B2930" else "#F1EFF4"
+    return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>:root{color-scheme:${if (dark) "dark" else "light"}}html,body{min-height:100%;background:$background;color:$foreground}body{font-family:sans-serif;padding:16px;line-height:1.65;caret-color:$foreground}body::selection{background:$selection}a{color:$link}img{display:block;margin:12px 0;max-width:100%;height:auto}h1,h2,h3{line-height:1.25}pre{overflow-x:auto;padding:14px;border-radius:10px;background:$codeBackground;line-height:1.45}pre code{font-family:monospace;white-space:pre}.tok-keyword{color:#C586C0;font-weight:600}.tok-string{color:#CE9178}.tok-comment{color:#6A9955}.tok-number{color:#B5CEA8}</style></head><body$edit><p>$html</p></body></html>"
 }
 
-private fun htmlToMarkdown(html: String): String = html
-    // Accept either attribute order. The visual editor emits src before alt,
-    // so the previous alt-before-src-only pattern silently dropped images.
-    .replace(Regex("""<img\b(?=[^>]*\bsrc=\"([^\"]+)\")(?=[^>]*\balt=\"([^\"]*)\")[^>]*/?>"""), "![\$2](\$1)")
-    .replace(Regex("<br\\s*/?>"), "\n")
-    .replace(Regex("</(p|div|h1|h2|h3)>"), "\n\n")
-    .replace(Regex("<h1>(.*?)</h1>"), "# \$1")
-    .replace(Regex("<h2>(.*?)</h2>"), "## \$1")
-    .replace(Regex("<h3>(.*?)</h3>"), "### \$1")
-    .replace(Regex("<strong>(.*?)</strong>"), "**\$1**")
-    .replace(Regex("<em>(.*?)</em>"), "*\$1*")
-    .replace(Regex("<[^>]+>"), "")
-    .replace("&nbsp;", " ")
-    .replace("&amp;", "&")
-    .replace("&lt;", "<")
-    .replace("&gt;", ">")
-    .trim()
+private fun highlightCode(source: String, language: String): String {
+    var text = source.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    val protected = mutableListOf<String>()
+    fun protect(pattern: Regex, cssClass: String) {
+        text = pattern.replace(text) {
+            val token = "MYGHNB_HIGHLIGHT_TOKEN_${protected.size}"
+            protected += "<span class=\"$cssClass\">${it.value}</span>"
+            token
+        }
+    }
+
+    val lang = language.lowercase()
+    if (lang in setOf("python", "py", "shell", "bash", "sh", "yaml", "yml")) {
+        protect(Regex("(?m)#.*$"), "tok-comment")
+    } else {
+        protect(Regex("(?m)//.*$|/\\*[\\s\\S]*?\\*/"), "tok-comment")
+    }
+    protect(Regex("\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'"), "tok-string")
+
+    val keywords = when (lang) {
+        "python", "py" -> "and|as|assert|async|await|break|class|continue|def|elif|else|for|from|if|import|in|is|lambda|None|not|or|pass|print|raise|return|True|False|try|while|with|yield"
+        "json" -> "true|false|null"
+        "javascript", "js", "typescript", "ts" -> "as|async|await|break|case|class|const|continue|debugger|default|delete|else|export|extends|false|for|from|function|if|import|in|instanceof|let|new|null|return|switch|this|throw|true|try|typeof|var|while|with|yield"
+        "kotlin", "java" -> "abstract|as|boolean|break|class|const|continue|data|else|false|final|for|fun|if|import|in|interface|is|new|null|object|override|package|private|public|return|static|this|throw|true|try|val|var|when|while"
+        "c", "cpp", "c++" -> "auto|bool|break|case|char|class|const|continue|default|delete|do|double|else|false|float|for|if|include|int|long|namespace|new|null|private|public|return|short|signed|static|struct|switch|template|this|true|typedef|typename|using|void|while"
+        else -> ""
+    }
+    if (keywords.isNotBlank()) {
+        text = Regex("\\b($keywords)\\b").replace(text) { "<span class=\"tok-keyword\">${it.value}</span>" }
+    }
+    text = Regex("\\b\\d+(?:\\.\\d+)?\\b").replace(text) { "<span class=\"tok-number\">${it.value}</span>" }
+    protected.forEachIndexed { index, token -> text = text.replace("MYGHNB_HIGHLIGHT_TOKEN_$index", token) }
+    return text
+}
+
+private fun htmlToMarkdown(html: String): String {
+    var markdown = html
+        // Accept either attribute order; the visual editor emits src before alt.
+        .replace(Regex("""<img\b(?=[^>]*\bsrc=\"([^\"]+)\")(?=[^>]*\balt=\"([^\"]*)\")[^>]*/?>"""), "![\$2](\$1)")
+        .replace(Regex("<br\\s*/?>"), "\n")
+        .replace(Regex("<h1[^>]*>(.*?)</h1>", RegexOption.DOT_MATCHES_ALL), "# \$1\n\n")
+        .replace(Regex("<h2[^>]*>(.*?)</h2>", RegexOption.DOT_MATCHES_ALL), "## \$1\n\n")
+        .replace(Regex("<h3[^>]*>(.*?)</h3>", RegexOption.DOT_MATCHES_ALL), "### \$1\n\n")
+        .replace(Regex("<pre[^>]*>(.*?)</pre>", RegexOption.DOT_MATCHES_ALL), "```\n\$1\n```\n\n")
+        .replace(Regex("<strong[^>]*>(.*?)</strong>", RegexOption.DOT_MATCHES_ALL), "**\$1**")
+        .replace(Regex("<b[^>]*>(.*?)</b>", RegexOption.DOT_MATCHES_ALL), "**\$1**")
+        .replace(Regex("<em[^>]*>(.*?)</em>", RegexOption.DOT_MATCHES_ALL), "*\$1*")
+        .replace(Regex("<i[^>]*>(.*?)</i>", RegexOption.DOT_MATCHES_ALL), "*\$1*")
+        .replace(Regex("<a[^>]*href=\"([^\"]+)\"[^>]*>(.*?)</a>", RegexOption.DOT_MATCHES_ALL), "[\$2](\$1)")
+        .replace(Regex("<li[^>]*>(.*?)</li>", RegexOption.DOT_MATCHES_ALL), "- \$1\n")
+        .replace(Regex("</(p|div|ul|ol)>"), "\n\n")
+        .replace(Regex("<[^>]+>"), "")
+    markdown = markdown
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace(Regex("\\n{3,}"), "\n\n")
+        .trim()
+    return markdown
+}
 
 @Composable
-private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layout.PaddingValues) {
+private fun ReaderScreenV2(note: Note, darkTheme: Boolean, padding: androidx.compose.foundation.layout.PaddingValues) {
     val context = LocalContext.current
     val articleUrl = "https://kzeng.github.io/posts/${note.fileName.removeSuffix(".md")}/"
     Column(Modifier.fillMaxSize().padding(padding)) {
@@ -669,8 +726,9 @@ private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layo
             modifier = Modifier.fillMaxWidth().weight(1f),
             factory = { context ->
                 WebView(context).apply {
-                    configureArticleWebView()
-                    loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(note.body), "text/html", "UTF-8", null)
+                        configureArticleWebView()
+                        setBackgroundColor(android.graphics.Color.parseColor(if (darkTheme) "#1C1B1F" else "#FFFFFF"))
+                        loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(note.body, dark = darkTheme), "text/html", "UTF-8", null)
                 }
             }
         )
