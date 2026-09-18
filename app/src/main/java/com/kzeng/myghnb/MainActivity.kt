@@ -130,7 +130,7 @@ fun MyGhNbApp() {
             "home" -> HomeScreen(notes, loading, padding, onRefresh = {
                 loading = true
                 scope.launch {
-                    val result = GitHubClient.fetchNotes(context)
+                    val result = withContext(Dispatchers.IO) { GitHubClient.fetchNotes(context) }
                     if (result.isNotEmpty()) notes = result
                     loading = false
                     snackbar.showSnackbar(if (result.isEmpty()) "同步失败或暂无文章" else "已同步 ${result.size} 篇文章")
