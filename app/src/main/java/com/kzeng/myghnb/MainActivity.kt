@@ -194,15 +194,16 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
     val pageItems = filtered.drop(page * pageSize).take(pageSize)
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(18.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("全部文章", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            if (loading) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) else IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, "同步") }
-        }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             IconButton(onClick = { section = "all"; selectedTag = null }) { Icon(Icons.Default.MenuBook, contentDescription = "全部文章") }
             IconButton(onClick = { section = "tags" }) { Icon(Icons.Default.Label, contentDescription = "标签") }
             IconButton(onClick = { section = "archive"; selectedTag = null }) { Icon(Icons.Default.Archive, contentDescription = "归档") }
             IconButton(onClick = { section = "search" }) { Icon(Icons.Default.Search, contentDescription = "查找") }
+            if (loading) {
+                CircularProgressIndicator(Modifier.padding(12.dp).size(22.dp), strokeWidth = 2.dp)
+            } else {
+                IconButton(onClick = onRefresh) { Icon(Icons.Default.Refresh, contentDescription = "同步刷新") }
+            }
         }
         if (section == "search") {
             Spacer(Modifier.height(8.dp))
@@ -394,11 +395,17 @@ private fun saveFromEditor(initial: Note, title: String, body: String, mode: Str
 }
 
 private fun markdownToHtml(markdown: String, editable: Boolean = false): String {
-    var html = markdown.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    html = Regex("!\\[([^]]*)]\\(([^)]+)\\)").replace(html) {
-        val imageUrl = it.groupValues[2].trim().replace("http://", "https://")
-        "<img src=\"$imageUrl\" alt=\"${it.groupValues[1]}\" loading=\"lazy\" style=\"display:block;max-width:100%;height:auto\"/>"
+    val imageHtml = mutableListOf<String>()
+    val imagePattern = Regex("""!\\[([^]]*)]\\(\\s*(?:<([^>]+)>|([^\\s)]+))(?:\\s+[\"'][^)]*[\"'])?\\s*\\)""")
+    val markdownWithImageTokens = imagePattern.replace(markdown) {
+        val imageUrl = (it.groupValues[2].ifBlank { it.groupValues[3] }).trim().replace("http://", "https://")
+        val alt = it.groupValues[1]
+        val token = "MYGHNB_IMAGE_TOKEN_${imageHtml.size}"
+        imageHtml += "<img src=\"$imageUrl\" alt=\"$alt\" loading=\"lazy\" style=\"display:block;max-width:100%;height:auto\"/>"
+        token
     }
+    var html = markdownWithImageTokens.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    imageHtml.forEachIndexed { index, image -> html = html.replace("MYGHNB_IMAGE_TOKEN_$index", image) }
     html = Regex("(?m)^### (.+)$").replace(html, "<h3>$1</h3>")
     html = Regex("(?m)^## (.+)$").replace(html, "<h2>$1</h2>")
     html = Regex("(?m)^# (.+)$").replace(html, "<h1>$1</h1>")
@@ -468,6 +475,7 @@ private class ArticleWebViewClient : WebViewClient() {
             connection.setRequestProperty("User-Agent", view.settings.userAgentString)
             connection.setRequestProperty("Referer", "https://kzeng.github.io/")
             connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+            connection.setRequestProperty("Accept-Encoding", "identity")
             connection.connect()
             if (connection.responseCode !in 200..299) return@runCatching null
 
