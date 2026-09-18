@@ -1,6 +1,8 @@
 package com.kzeng.myghnb
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -8,12 +10,12 @@ import android.util.Base64
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -25,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -43,8 +46,18 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FormatBold
+import androidx.compose.material.icons.filled.FormatItalic
+import androidx.compose.material.icons.filled.Title
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +70,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
@@ -68,6 +82,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -125,7 +140,13 @@ fun MyGhNbApp() {
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text(if (screen == "editor") "编辑文章" else if (screen == "about") "About" else "My GH Notebook", fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        if (screen == "editor") "编辑文章" else if (screen == "about") "About" else "My GH Notebook",
+                        modifier = Modifier.padding(start = 4.dp),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                },
                 navigationIcon = { if (screen != "home") IconButton(onClick = { screen = "home" }) { Icon(Icons.Default.ArrowBack, "返回") } },
                 actions = { if (screen == "home") {
                     IconButton(onClick = { darkTheme = !darkTheme; settings.edit().putBoolean("dark_theme", darkTheme).apply() }) { Icon(if (darkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, "切换主题") }
@@ -134,7 +155,16 @@ fun MyGhNbApp() {
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
             )
         },
-        floatingActionButton = { if (screen == "home") FloatingActionButton(onClick = ::newNote) { Icon(Icons.Default.Add, "新建") } }
+        floatingActionButton = {
+            if (screen == "home") {
+                FloatingActionButton(
+                    onClick = ::newNote,
+                    shape = CircleShape,
+                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
+                    contentColor = MaterialTheme.colorScheme.onPrimary
+                ) { Icon(Icons.Default.Add, "新建") }
+            }
+        }
     ) { padding ->
         when (screen) {
             "home" -> HomeScreenV3(notes, loading, padding, onRefresh = {
@@ -150,7 +180,7 @@ fun MyGhNbApp() {
                 }
             }, onOpen = { selected = it; screen = "reader" }, onEdit = { selected = it; screen = "editor" })
             "reader" -> ReaderScreenV2(selected ?: Note("", "", ""), padding)
-            "editor" -> EditorScreenV2(selected ?: Note("", "", ""), padding, onSave = {
+            "editor" -> EditorScreenV2(selected ?: Note("", "", ""), darkTheme, padding, onSave = {
                 notes = notes.filterNot { n -> n.fileName == it.fileName } + it
                 saveDrafts(context, notes)
                 selected = it
@@ -223,20 +253,58 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
         if (pageItems.isEmpty()) Text("暂无匹配文章", color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(pageItems) { note ->
-                Card(Modifier.fillMaxWidth().clickable { onOpen(note) }) {
-                    Column(Modifier.padding(16.dp)) {
-                        if (section == "archive") Text(note.date.take(7), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
-                        Text(note.title.ifBlank { "未命名" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Text("${note.date} · ${note.fileName}", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { IconButton(onClick = { onEdit(note) }) { Icon(Icons.Default.Edit, "编辑文章") } }
-                    }
-                }
+                ArticleCard(note, section == "archive", onOpen, onEdit)
             }
         }
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(enabled = page > 0, onClick = { page-- }) { Text("上一页") }
             Text(" ${page + 1} / $pageCount ", modifier = Modifier.padding(horizontal = 8.dp))
             OutlinedButton(enabled = page + 1 < pageCount, onClick = { page++ }) { Text("下一页") }
+        }
+    }
+}
+
+@Composable
+private fun ArticleCard(note: Note, showMonth: Boolean, onOpen: (Note) -> Unit, onEdit: (Note) -> Unit) {
+    /* val excerpt = note.body
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() && !it.startsWith("#") && !it.startsWith("!") && !it.contains("![") }
+        .joinToString(" ")
+        .replace(Regex("\\[([^]]+)]\\([^)]*\\)"), "$1")
+        .replace(Regex("[*_`>]"), "")
+        .trim()
+        .let { if (it.length > 110) it.take(110).trimEnd() + "…" else it }
+    val displayExcerpt = excerpt.ifBlank {
+        if (note.body.contains("![")) "包含图片的文章" else "暂无摘要"
+    }
+    */
+    val readingMinutes = maxOf(1, note.body.length / 450 + 1)
+
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onOpen(note) },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Column(Modifier.padding(start = 16.dp, top = 15.dp, end = 10.dp, bottom = 12.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (showMonth) note.date.take(7) else note.date,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(note.title.ifBlank { "未命名" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, maxLines = 2)
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                note.tags.take(2).forEach { tag ->
+                    AssistChip(onClick = {}, label = { Text(tag, maxLines = 1) }, modifier = Modifier.padding(end = 4.dp))
+                }
+                if (note.tags.isEmpty()) Text("无标签", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                Spacer(Modifier.weight(1f))
+                Text("约 $readingMinutes 分钟", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                IconButton(onClick = { onEdit(note) }) { Icon(Icons.Default.Edit, contentDescription = "编辑文章") }
+            }
         }
     }
 }
@@ -327,27 +395,78 @@ private fun EditorScreen(initial: Note, padding: androidx.compose.foundation.lay
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun EditorScreenV2(initial: Note, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
+private fun EditorScreenV2(initial: Note, darkTheme: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
+    val context = LocalContext.current
     var title by remember(initial.fileName) { mutableStateOf(initial.title) }
     var body by remember(initial.fileName) { mutableStateOf(initial.body) }
-    var mode by remember(initial.fileName) { mutableStateOf("code") }
+    var tags by remember(initial.fileName) { mutableStateOf(initial.tags) }
+    var tagOptions by remember(initial.fileName) { mutableStateOf((loadKnownTags(context) + initial.tags).distinct()) }
+    var showTags by remember(initial.fileName) { mutableStateOf(false) }
+    var newTag by remember(initial.fileName) { mutableStateOf("") }
+    var mode by remember(initial.fileName) { mutableStateOf("visual") }
     var visualEditor by remember { mutableStateOf<WebView?>(null) }
-    val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
         OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("标题") }, singleLine = true)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://imgchr.com/"))) }) { Icon(Icons.Default.Image, null); Spacer(Modifier.size(6.dp)); Text("打开图床") }
             OutlinedButton(onClick = { val clip = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager; clip.primaryClip?.getItemAt(0)?.text?.toString()?.let { body += "\n\n$it\n" } }) { Text("粘贴图片链接") }
+            OutlinedButton(onClick = { showTags = !showTags }) {
+                Icon(Icons.Default.Add, contentDescription = null)
+                Spacer(Modifier.size(4.dp))
+                Text("标签")
+            }
+        }
+        if (showTags) {
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("选择标签", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(6.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        tagOptions.forEach { tag ->
+                            FilterChip(
+                                selected = tag in tags,
+                                onClick = {
+                                    tags = if (tag in tags) tags - tag else (tags + tag).distinct()
+                                },
+                                label = { Text(tag) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(newTag, { newTag = it }, Modifier.weight(1f), label = { Text("新增标签") }, singleLine = true)
+                        Button(onClick = {
+                            val tag = newTag.trim()
+                            if (tag.isNotBlank()) {
+                                tagOptions = (tagOptions + tag).distinct()
+                                tags = (tags + tag).distinct()
+                                saveKnownTags(context, tagOptions)
+                                newTag = ""
+                            }
+                        }, enabled = newTag.trim().isNotBlank()) { Text("新增") }
+                    }
+                }
+            }
         }
         Spacer(Modifier.height(10.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            OutlinedButton(onClick = { mode = "code" }) { Text("Code") }
-            OutlinedButton(onClick = { mode = "visual" }) { Text("WYSIWYG") }
-            OutlinedButton(onClick = { mode = "preview" }) { Text("预览文章") }
-        }
+        MarkdownToolbar(
+            mode = mode,
+            visualEditor = visualEditor,
+            onModeChange = { nextMode ->
+                if (nextMode == "code" && mode == "visual" && visualEditor != null) {
+                    syncVisualToMarkdown(visualEditor!!) { body = it; mode = "code" }
+                } else {
+                    mode = nextMode
+                }
+            },
+            onBodyChange = { body = it }
+        )
         Spacer(Modifier.height(8.dp))
         when (mode) {
             "code" -> OutlinedTextField(body, { body = it }, Modifier.fillMaxWidth().weight(1f), label = { Text("Markdown") }, placeholder = { Text("开始写作…") })
@@ -359,7 +478,7 @@ private fun EditorScreenV2(initial: Note, padding: androidx.compose.foundation.l
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         visualEditor = this
-                        loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(body, editable = true), "text/html", "UTF-8", null)
+                        loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(body, editable = true, dark = darkTheme), "text/html", "UTF-8", null)
                     }
                 },
                 update = { visualEditor = it }
@@ -377,32 +496,119 @@ private fun EditorScreenV2(initial: Note, padding: androidx.compose.foundation.l
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { saveFromEditor(initial, title, body, mode, visualEditor, onSave) }, Modifier.weight(1f)) { Icon(Icons.Default.Save, null); Spacer(Modifier.size(6.dp)); Text("保存草稿") }
-            Button(onClick = { saveFromEditor(initial, title, body, mode, visualEditor, onPublish) }, Modifier.weight(1f)) { Icon(Icons.Default.Send, null); Spacer(Modifier.size(6.dp)); Text("发布") }
+            Button(onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onSave) }, Modifier.weight(1f)) { Icon(Icons.Default.Save, null); Spacer(Modifier.size(6.dp)); Text("保存草稿") }
+            Button(onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onPublish) }, Modifier.weight(1f)) { Icon(Icons.Default.Send, null); Spacer(Modifier.size(6.dp)); Text("发布") }
         }
     }
 }
 
-private fun saveFromEditor(initial: Note, title: String, body: String, mode: String, visualEditor: WebView?, callback: (Note) -> Unit) {
+@Composable
+private fun MarkdownToolbar(
+    mode: String,
+    visualEditor: WebView?,
+    onModeChange: (String) -> Unit,
+    onBodyChange: (String) -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        IconButton(onClick = { applyMarkdownTool("bold", mode, visualEditor, onBodyChange) }) {
+            Icon(Icons.Default.FormatBold, contentDescription = "粗体")
+        }
+        IconButton(onClick = { applyMarkdownTool("italic", mode, visualEditor, onBodyChange) }) {
+            Icon(Icons.Default.FormatItalic, contentDescription = "斜体")
+        }
+        IconButton(onClick = { applyMarkdownTool("heading", mode, visualEditor, onBodyChange) }) {
+            Icon(Icons.Default.Title, contentDescription = "标题")
+        }
+        IconButton(onClick = { applyMarkdownTool("code", mode, visualEditor, onBodyChange) }) {
+            Icon(Icons.Default.Code, contentDescription = "代码")
+        }
+        IconButton(onClick = { applyMarkdownTool("list", mode, visualEditor, onBodyChange) }) {
+            Icon(Icons.Default.FormatListBulleted, contentDescription = "列表")
+        }
+        IconButton(onClick = { applyMarkdownTool("link", mode, visualEditor, onBodyChange) }) {
+            Icon(Icons.Default.Link, contentDescription = "链接")
+        }
+        Text("Code", style = MaterialTheme.typography.labelLarge)
+        Switch(
+            checked = mode == "code",
+            onCheckedChange = { onModeChange(if (it) "code" else "visual") }
+        )
+    }
+}
+
+private fun applyMarkdownTool(
+    tool: String,
+    mode: String,
+    visualEditor: WebView?,
+    onBodyChange: (String) -> Unit
+) {
+    if (mode == "visual" && visualEditor != null) {
+        val command = when (tool) {
+            "bold" -> "bold" to null
+            "italic" -> "italic" to null
+            "heading" -> "formatBlock" to "<h2>"
+            "code" -> "formatBlock" to "<pre>"
+            "list" -> "insertUnorderedList" to null
+            "link" -> "createLink" to "https://"
+            else -> return
+        }
+        val argument = command.second?.let { "'$it'" } ?: "null"
+        val script = "document.execCommand('${command.first}', false, $argument);"
+        visualEditor.evaluateJavascript(script, null)
+        return
+    }
+
+    val snippet = when (tool) {
+        "bold" -> "**粗体**"
+        "italic" -> "*斜体*"
+        "heading" -> "## 标题"
+        "code" -> "`代码`"
+        "list" -> "- 列表项"
+        "link" -> "[链接文字](https://)"
+        else -> return
+    }
+    onBodyChange(snippet)
+}
+
+private fun syncVisualToMarkdown(editor: WebView, onReady: (String) -> Unit) {
+    editor.evaluateJavascript("document.body.innerHTML") { rawHtml ->
+        val html = runCatching { org.json.JSONTokener(rawHtml).nextValue() as String }.getOrDefault(rawHtml)
+        onReady(htmlToMarkdown(html))
+    }
+}
+
+private fun saveFromEditor(initial: Note, title: String, body: String, tags: List<String>, mode: String, visualEditor: WebView?, callback: (Note) -> Unit) {
     if (mode != "visual" || visualEditor == null) {
-        callback(initial.copy(title = title, body = body))
+        callback(initial.copy(title = title, body = body, tags = tags))
         return
     }
     visualEditor.evaluateJavascript("document.body.innerHTML") { rawHtml ->
         val html = runCatching { org.json.JSONTokener(rawHtml).nextValue() as String }.getOrDefault(rawHtml)
-        callback(initial.copy(title = title, body = htmlToMarkdown(html)))
+        callback(initial.copy(title = title, body = htmlToMarkdown(html), tags = tags))
     }
 }
 
-private fun markdownToHtml(markdown: String, editable: Boolean = false): String {
+private fun markdownToHtml(markdown: String, editable: Boolean = false, dark: Boolean = false): String {
     val imageHtml = mutableListOf<String>()
-    val imagePattern = Regex("""!\[([^]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+[\"'][^)]*[\"'])?\s*\)""")
-    val markdownWithImageTokens = imagePattern.replace(markdown) {
-        val imageUrl = (it.groupValues[2].ifBlank { it.groupValues[3] }).trim().replace("http://", "https://")
-        val alt = it.groupValues[1]
+    fun imageToken(altText: String, source: String): String {
+        val imageUrl = source.trim().let { url -> if (url.startsWith("//")) "https:$url" else url }
+        val alt = altText.replace("&", "&amp;").replace("\"", "&quot;")
+        val escapedUrl = imageUrl.replace("&", "&amp;").replace("\"", "&quot;")
         val token = "MYGHNB_IMAGE_TOKEN_${imageHtml.size}"
-        imageHtml += "<img src=\"$imageUrl\" alt=\"$alt\" loading=\"lazy\" style=\"display:block;max-width:100%;height:auto\"/>"
-        token
+        imageHtml += "<img src=\"$escapedUrl\" alt=\"$alt\" loading=\"eager\" onerror=\"if(this.src.indexOf('https://') === 0){this.onerror=null;this.src=this.src.replace('https://','http://');}\" style=\"display:block;max-width:100%;height:auto\"/>"
+        return token
+    }
+    val linkedImagePattern = Regex("""\[!\[([^]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))\s*\)\]\(\s*(?:<[^>]+>|[^\s)]+)\s*\)""")
+    var markdownWithImageTokens = linkedImagePattern.replace(markdown) {
+        imageToken(it.groupValues[1], it.groupValues[2].ifBlank { it.groupValues[3] })
+    }
+    val imagePattern = Regex("""!\[([^]]*)\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+[\"'][^)]*[\"'])?\s*\)""")
+    markdownWithImageTokens = imagePattern.replace(markdownWithImageTokens) {
+        imageToken(it.groupValues[1], it.groupValues[2].ifBlank { it.groupValues[3] })
     }
     var html = markdownWithImageTokens.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     imageHtml.forEachIndexed { index, image -> html = html.replace("MYGHNB_IMAGE_TOKEN_$index", image) }
@@ -413,11 +619,17 @@ private fun markdownToHtml(markdown: String, editable: Boolean = false): String 
     html = Regex("(?<!\\*)\\*([^*]+)\\*(?!\\*)").replace(html, "<em>$1</em>")
     html = html.replace("\n\n", "</p><p>").replace("\n", "<br/>")
     val edit = if (editable) " contenteditable=\"true\" spellcheck=\"true\"" else ""
-    return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>body{font-family:sans-serif;padding:16px;line-height:1.65;color:#202124;background:#fff}img{display:block;margin:12px 0}h1,h2,h3{line-height:1.25}</style></head><body$edit><p>$html</p></body></html>"
+    val background = if (dark) "#1C1B1F" else "#FFFFFF"
+    val foreground = if (dark) "#F4EFF4" else "#202124"
+    val link = if (dark) "#D0BCFF" else "#6750A4"
+    val selection = if (dark) "#4F378B" else "#D0BCFF"
+    return "<!doctype html><html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><style>:root{color-scheme:${if (dark) "dark" else "light"}}body{font-family:sans-serif;padding:16px;line-height:1.65;color:$foreground;background:$background;caret-color:$foreground}body::selection{background:$selection}a{color:$link}img{display:block;margin:12px 0;max-width:100%;height:auto}h1,h2,h3{line-height:1.25}</style></head><body$edit><p>$html</p></body></html>"
 }
 
 private fun htmlToMarkdown(html: String): String = html
-    .replace(Regex("<img[^>]*alt=\\\"([^\\\"]*)\\\"[^>]*src=\\\"([^\\\"]+)\\\"[^>]*/?>"), "![\$1](\$2)")
+    // Accept either attribute order. The visual editor emits src before alt,
+    // so the previous alt-before-src-only pattern silently dropped images.
+    .replace(Regex("""<img\b(?=[^>]*\bsrc=\"([^\"]+)\")(?=[^>]*\balt=\"([^\"]*)\")[^>]*/?>"""), "![\$2](\$1)")
     .replace(Regex("<br\\s*/?>"), "\n")
     .replace(Regex("</(p|div|h1|h2|h3)>"), "\n\n")
     .replace(Regex("<h1>(.*?)</h1>"), "# \$1")
@@ -434,10 +646,24 @@ private fun htmlToMarkdown(html: String): String = html
 
 @Composable
 private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layout.PaddingValues) {
+    val context = LocalContext.current
+    val articleUrl = "https://kzeng.github.io/posts/${note.fileName.removeSuffix(".md")}/"
     Column(Modifier.fillMaxSize().padding(padding)) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            Text(note.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(note.date, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(note.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text(note.date, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("文章链接", articleUrl))
+                Toast.makeText(context, "文章链接已复制", Toast.LENGTH_SHORT).show()
+            }) {
+                Icon(Icons.Default.Share, contentDescription = "复制文章链接")
+            }
         }
         AndroidView(
             modifier = Modifier.fillMaxWidth().weight(1f),
@@ -452,37 +678,16 @@ private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layo
 }
 
 private fun WebView.configureArticleWebView() {
-    webViewClient = ArticleWebViewClient()
+    // Let Chromium load images directly. Intercepting every image with
+    // HttpURLConnection breaks redirects, compressed responses, and hosts that
+    // require WebView's normal request headers/cookie handling.
+    webViewClient = WebViewClient()
     settings.javaScriptEnabled = false
     settings.domStorageEnabled = true
     settings.loadsImagesAutomatically = true
     settings.blockNetworkImage = false
     settings.cacheMode = WebSettings.LOAD_DEFAULT
     settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-}
-
-private class ArticleWebViewClient : WebViewClient() {
-    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-        if (request.isForMainFrame) return null
-        val scheme = request.url.scheme ?: return null
-        if (scheme != "https" && scheme != "http") return null
-
-        return runCatching {
-            val connection = java.net.URL(request.url.toString()).openConnection() as java.net.HttpURLConnection
-            connection.instanceFollowRedirects = true
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.setRequestProperty("User-Agent", view.settings.userAgentString)
-            connection.setRequestProperty("Referer", "https://kzeng.github.io/")
-            connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            connection.connect()
-            if (connection.responseCode !in 200..299) return@runCatching null
-
-            val mimeType = connection.contentType?.substringBefore(';')?.trim().orEmpty().ifBlank { "image/*" }
-            WebResourceResponse(mimeType, null, connection.inputStream)
-        }.getOrNull()
-    }
 }
 
 @Composable
@@ -520,8 +725,17 @@ private fun AboutScreen(context: Context, padding: androidx.compose.foundation.l
 
 private fun loadDrafts(context: Context): List<Note> = runCatching {
     val array = JSONArray(context.getSharedPreferences("drafts", 0).getString("items", "[]"))
-    List(array.length()) { i -> val o = array.getJSONObject(i); Note(o.getString("file"), o.getString("title"), o.getString("date"), o.optString("body")) }
+    List(array.length()) { i -> val o = array.getJSONObject(i); Note(o.getString("file"), o.getString("title"), o.getString("date"), o.optString("body"), tags = o.optJSONArray("tags")?.let { a -> List(a.length()) { n -> a.getString(n) } } ?: emptyList()) }
 }.getOrDefault(emptyList())
+
+private fun loadKnownTags(context: Context): List<String> = runCatching {
+    JSONArray(context.getSharedPreferences("settings", 0).getString("known_tags", "[]"))
+        .let { array -> List(array.length()) { i -> array.getString(i) } }
+}.getOrDefault(emptyList())
+
+private fun saveKnownTags(context: Context, tags: List<String>) {
+    context.getSharedPreferences("settings", 0).edit().putString("known_tags", JSONArray(tags.distinct()).toString()).apply()
+}
 
 private fun loadCachedNotes(context: Context): List<Note> = runCatching {
     val array = JSONArray(context.getSharedPreferences("remote_cache", 0).getString("items", "[]"))
@@ -535,7 +749,15 @@ private fun saveCachedNotes(context: Context, notes: List<Note>) {
 }
 
 private fun mergeNotes(drafts: List<Note>, remote: List<Note>): List<Note> {
-    val byFile = (remote + drafts).associateBy { it.fileName }
+    val remoteByFile = remote.associateBy { it.fileName }
+    val mergedDrafts = drafts.map { draft ->
+        val remoteNote = remoteByFile[draft.fileName]
+        draft.copy(
+            tags = draft.tags.ifEmpty { remoteNote?.tags ?: emptyList() },
+            sha = draft.sha ?: remoteNote?.sha
+        )
+    }
+    val byFile = (remote + mergedDrafts).associateBy { it.fileName }
     return byFile.values.toList()
 }
 
@@ -547,7 +769,7 @@ private fun parseTags(raw: String): List<String> = Regex("(?m)^tags:\\s*\\[([^]]
     .filter { it.isNotBlank() }
 
 private fun saveDrafts(context: Context, notes: List<Note>) {
-    val array = JSONArray(); notes.forEach { array.put(JSONObject().apply { put("file", it.fileName); put("title", it.title); put("date", it.date); put("body", it.body) }) }
+    val array = JSONArray(); notes.forEach { array.put(JSONObject().apply { put("file", it.fileName); put("title", it.title); put("date", it.date); put("body", it.body); put("tags", JSONArray(it.tags)) }) }
     context.getSharedPreferences("drafts", 0).edit().putString("items", array.toString()).apply()
 }
 

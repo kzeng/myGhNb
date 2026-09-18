@@ -3,6 +3,7 @@
     <application
         android:allowBackup="true"
         android:label="My GH Notebook"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.MyGhNb"
         android:icon="@drawable/my_gh_nb_logo">
         <activity android:name=".MainActivity" android:exported="true">
