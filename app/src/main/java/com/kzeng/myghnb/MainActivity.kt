@@ -8,6 +8,8 @@ import android.util.Base64
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
@@ -443,13 +445,36 @@ private fun ReaderScreenV2(note: Note, padding: androidx.compose.foundation.layo
 }
 
 private fun WebView.configureArticleWebView() {
-    webViewClient = WebViewClient()
+    webViewClient = ArticleWebViewClient()
     settings.javaScriptEnabled = false
     settings.domStorageEnabled = true
     settings.loadsImagesAutomatically = true
     settings.blockNetworkImage = false
     settings.cacheMode = WebSettings.LOAD_DEFAULT
     settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+}
+
+private class ArticleWebViewClient : WebViewClient() {
+    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        if (request.isForMainFrame) return null
+        val scheme = request.url.scheme ?: return null
+        if (scheme != "https" && scheme != "http") return null
+
+        return runCatching {
+            val connection = java.net.URL(request.url.toString()).openConnection() as java.net.HttpURLConnection
+            connection.instanceFollowRedirects = true
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.setRequestProperty("User-Agent", view.settings.userAgentString)
+            connection.setRequestProperty("Referer", "https://kzeng.github.io/")
+            connection.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8")
+            connection.connect()
+            if (connection.responseCode !in 200..299) return@runCatching null
+
+            val mimeType = connection.contentType?.substringBefore(';')?.trim().orEmpty().ifBlank { "image/*" }
+            WebResourceResponse(mimeType, null, connection.inputStream)
+        }.getOrNull()
+    }
 }
 
 @Composable
