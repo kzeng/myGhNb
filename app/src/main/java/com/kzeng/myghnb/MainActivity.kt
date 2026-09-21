@@ -206,17 +206,20 @@ fun MyGhNbApp() {
                 }
             }, onOpen = { selected = it; screen = "reader" }, onEdit = { selected = it; screen = "editor" })
             "reader" -> ReaderScreenV2(selected ?: Note("", "", ""), darkTheme, padding)
-            "editor" -> EditorScreenV2(selected ?: Note("", "", ""), darkTheme, padding, onSave = {
+            "editor" -> EditorScreenV2(selected ?: Note("", "", ""), darkTheme, loading, padding, onSave = {
                 notes = notes.filterNot { n -> n.fileName == it.fileName } + it
                 saveDrafts(context, notes)
                 selected = it
                 scope.launch { snackbar.showSnackbar("草稿已保存") }
             }, onPublish = { note ->
+                notes = notes.filterNot { n -> n.fileName == note.fileName } + note
+                saveDrafts(context, notes)
+                selected = note
                 loading = true
                 scope.launch {
                     val ok = GitHubClient.publish(context, note)
                     loading = false
-                    snackbar.showSnackbar(if (ok) "已提交到 clash 分支" else "提交失败，请检查 GitHub Token")
+                    snackbar.showSnackbar(if (ok) "草稿已保存，并已提交到 clash 分支" else "草稿已保存，但发布失败，请检查 GitHub Token")
                 }
             })
             "about" -> AboutScreen(context, padding)
@@ -470,7 +473,7 @@ private fun EditorScreen(initial: Note, padding: androidx.compose.foundation.lay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun EditorScreenV2(initial: Note, darkTheme: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
+private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
     val context = LocalContext.current
     var title by remember(initial.fileName) { mutableStateOf(initial.title) }
     var body by remember(initial.fileName) { mutableStateOf(initial.body) }
@@ -644,8 +647,8 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, padding: androidx.
         }
         Spacer(Modifier.height(10.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onSave) }, Modifier.weight(1f)) { Icon(Icons.Default.Save, null); Spacer(Modifier.size(6.dp)); Text("保存草稿") }
-            Button(onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onPublish) }, Modifier.weight(1f)) { Icon(Icons.Default.Send, null); Spacer(Modifier.size(6.dp)); Text("发布") }
+            Button(enabled = !publishing, onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onSave) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Save, null); Spacer(Modifier.size(6.dp)); Text("保存草稿") }
+            Button(enabled = !publishing, onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onPublish) }, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Send, null); Spacer(Modifier.size(6.dp)); Text(if (publishing) "发布中…" else "发布") }
         }
     }
     if (showAiPanel) {
@@ -1242,7 +1245,7 @@ private object GitHubClient {
     }.getOrDefault(emptyList()) }
     suspend fun publish(context: Context, note: Note): Boolean = withContext(Dispatchers.IO) { runCatching {
         val path = "$repo/${note.fileName}?ref=clash"; val check = connection(context, path); val existing = if (check.responseCode == 200) JSONObject(check.inputStream.bufferedReader().readText()).optString("sha") else null
-        val body = "---\ntitle: \"${note.title.replace("\"", "\\\"")}\"\ndate: ${note.date}\ndraft: false\ntags: []\n---\n\n${note.body}"
+        val body = "---\ntitle: \"${note.title.replace("\"", "\\\"")}\"\ndate: ${note.date}\ndraft: false\ntags: ${JSONArray(note.tags)}\n---\n\n${note.body}"
         val put = connection(context, "$repo/${note.fileName}"); put.requestMethod = "PUT"; put.doOutput = true; put.setRequestProperty("Content-Type", "application/json")
         val payload = JSONObject().apply { put("message", "publish ${note.fileName}"); put("content", Base64.encodeToString(body.toByteArray(), Base64.NO_WRAP)); put("branch", "clash"); if (!existing.isNullOrBlank()) put("sha", existing) }
         put.outputStream.use { it.write(payload.toString().toByteArray()) }; put.responseCode in 200..201
