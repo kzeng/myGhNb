@@ -7,6 +7,7 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -22,9 +23,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -38,6 +42,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
@@ -54,6 +59,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
 import androidx.compose.material.icons.filled.FormatItalic
@@ -68,6 +74,7 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.LinearProgressIndicator
@@ -88,6 +95,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -146,7 +155,15 @@ fun MyGhNbApp() {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("settings", 0) }
     val systemDarkTheme = isSystemInDarkTheme()
-    var darkTheme by remember { mutableStateOf(settings.getBoolean("dark_theme", systemDarkTheme)) }
+    val storedThemeMode = remember {
+        settings.getString("theme_mode", null) ?: when {
+            settings.contains("dark_theme") -> if (settings.getBoolean("dark_theme", systemDarkTheme)) "dark" else "light"
+            else -> "system"
+        }
+    }
+    var themeMode by remember { mutableStateOf(storedThemeMode) }
+    var colorSchemeKey by remember { mutableStateOf(settings.getString("color_scheme", "github_blue") ?: "github_blue") }
+    val darkTheme = themeMode == "dark" || (themeMode == "system" && systemDarkTheme)
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var screen by remember { mutableStateOf("home") }
@@ -161,7 +178,7 @@ fun MyGhNbApp() {
         screen = "editor"
     }
 
-    MyGhNbTheme(darkTheme) {
+    MyGhNbTheme(darkTheme, colorSchemeKey, context) {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -175,7 +192,10 @@ fun MyGhNbApp() {
                 },
                 navigationIcon = { if (screen != "home") IconButton(onClick = { screen = "home" }) { Icon(Icons.Default.ArrowBack, "返回") } },
                 actions = { if (screen == "home") {
-                    IconButton(onClick = { darkTheme = !darkTheme; settings.edit().putBoolean("dark_theme", darkTheme).apply() }) { Icon(if (darkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, "切换主题") }
+                    IconButton(onClick = {
+                        themeMode = if (darkTheme) "light" else "dark"
+                        settings.edit().putString("theme_mode", themeMode).apply()
+                    }) { Icon(if (darkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, "切换主题") }
                     IconButton(onClick = { screen = "about" }) { Icon(Icons.Default.Info, "About") }
                 } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -222,15 +242,176 @@ fun MyGhNbApp() {
                     snackbar.showSnackbar(if (ok) "草稿已保存，并已提交到 clash 分支" else "草稿已保存，但发布失败，请检查 GitHub Token")
                 }
             })
-            "about" -> AboutScreen(context, padding)
+            "about" -> AboutScreen(
+                context = context,
+                padding = padding,
+                themeMode = themeMode,
+                colorSchemeKey = colorSchemeKey,
+                onThemeModeChange = {
+                    themeMode = it
+                    settings.edit().putString("theme_mode", it).apply()
+                },
+                onColorSchemeChange = {
+                    colorSchemeKey = it
+                    settings.edit().putString("color_scheme", it).apply()
+                }
+            )
         }
     }
     }
 }
 
 @Composable
-private fun MyGhNbTheme(dark: Boolean, content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = if (dark) darkColorScheme() else lightColorScheme(), content = content)
+private fun MyGhNbTheme(dark: Boolean, paletteKey: String, context: Context, content: @Composable () -> Unit) {
+    val colorScheme = if (paletteKey == "system_dynamic" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    } else {
+        appColorScheme(paletteKey, dark)
+    }
+    MaterialTheme(colorScheme = colorScheme, content = content)
+}
+
+private data class AppPalette(
+    val key: String,
+    val label: String,
+    val primary: Color,
+    val secondary: Color,
+    val tertiary: Color
+)
+
+private val appPalettes = listOf(
+    AppPalette("github_blue", "GitHub Blue", Color(0xFF0969DA), Color(0xFF576680), Color(0xFF006874)),
+    AppPalette("ocean", "Ocean", Color(0xFF006874), Color(0xFF4F6368), Color(0xFF46618A)),
+    AppPalette("forest", "Forest", Color(0xFF3C6835), Color(0xFF53664B), Color(0xFF356A68)),
+    AppPalette("rose", "Rose", Color(0xFFA23D63), Color(0xFF765660), Color(0xFF76558F)),
+    AppPalette("violet", "Violet", Color(0xFF6750A4), Color(0xFF625B71), Color(0xFF805080)),
+    AppPalette("system_dynamic", "系统动态色", Color(0xFF4F64A0), Color(0xFF5A6376), Color(0xFF526A65))
+)
+
+private fun appColorScheme(key: String, dark: Boolean): ColorScheme = when (key) {
+    "ocean" -> if (dark) darkColorScheme(
+        primary = Color(0xFF6DD8E8), onPrimary = Color(0xFF00363D), primaryContainer = Color(0xFF004F58), onPrimaryContainer = Color(0xFFB2EBF2),
+        secondary = Color(0xFFB4CBD0), onSecondary = Color(0xFF1F3337), secondaryContainer = Color(0xFF354A4E), onSecondaryContainer = Color(0xFFD0E7EB),
+        tertiary = Color(0xFFAFC7F5), onTertiary = Color(0xFF1F304F), tertiaryContainer = Color(0xFF354767), onTertiaryContainer = Color(0xFFD7E2FF),
+        background = Color(0xFF101416), onBackground = Color(0xFFE0E3E4), surface = Color(0xFF101416), onSurface = Color(0xFFE0E3E4),
+        surfaceVariant = Color(0xFF3F484B), onSurfaceVariant = Color(0xFFBFC8CA), outline = Color(0xFF899396)
+    ) else lightColorScheme(
+        primary = Color(0xFF006874), onPrimary = Color.White, primaryContainer = Color(0xFF97F0FF), onPrimaryContainer = Color(0xFF001F24),
+        secondary = Color(0xFF4F6368), onSecondary = Color.White, secondaryContainer = Color(0xFFD2E5E9), onSecondaryContainer = Color(0xFF0A1F23),
+        tertiary = Color(0xFF46618A), onTertiary = Color.White, tertiaryContainer = Color(0xFFD7E2FF), onTertiaryContainer = Color(0xFF001A40),
+        background = Color(0xFFFAFDFE), onBackground = Color(0xFF191C1D), surface = Color(0xFFFAFDFE), onSurface = Color(0xFF191C1D),
+        surfaceVariant = Color(0xFFDBE4E6), onSurfaceVariant = Color(0xFF3F484B), outline = Color(0xFF6F797B)
+    )
+    "forest" -> if (dark) darkColorScheme(
+        primary = Color(0xFFA5D395), onPrimary = Color(0xFF12370F), primaryContainer = Color(0xFF285121), onPrimaryContainer = Color(0xFFC1EFB0),
+        secondary = Color(0xFFB9CCAE), onSecondary = Color(0xFF253422), secondaryContainer = Color(0xFF3B4B37), onSecondaryContainer = Color(0xFFD5E8C9),
+        tertiary = Color(0xFF8DD4CE), onTertiary = Color(0xFF003734), tertiaryContainer = Color(0xFF00504B), onTertiaryContainer = Color(0xFFA9F0E8),
+        background = Color(0xFF11140F), onBackground = Color(0xFFE1E4D9), surface = Color(0xFF11140F), onSurface = Color(0xFFE1E4D9),
+        surfaceVariant = Color(0xFF42493D), onSurfaceVariant = Color(0xFFC2C9B9), outline = Color(0xFF8C9384)
+    ) else lightColorScheme(
+        primary = Color(0xFF3C6835), onPrimary = Color.White, primaryContainer = Color(0xFFC1EFB0), onPrimaryContainer = Color(0xFF082107),
+        secondary = Color(0xFF53664B), onSecondary = Color.White, secondaryContainer = Color(0xFFD6E8CA), onSecondaryContainer = Color(0xFF111F0E),
+        tertiary = Color(0xFF356A68), onTertiary = Color.White, tertiaryContainer = Color(0xFFA9F0E8), onTertiaryContainer = Color(0xFF00201E),
+        background = Color(0xFFFAFDF6), onBackground = Color(0xFF191D17), surface = Color(0xFFFAFDF6), onSurface = Color(0xFF191D17),
+        surfaceVariant = Color(0xFFDDE5D7), onSurfaceVariant = Color(0xFF414940), outline = Color(0xFF71796D)
+    )
+    "rose" -> if (dark) darkColorScheme(
+        primary = Color(0xFFFFB0C8), onPrimary = Color(0xFF5E1230), primaryContainer = Color(0xFF7D2948), onPrimaryContainer = Color(0xFFFFD9E2),
+        secondary = Color(0xFFE6BDC7), onSecondary = Color(0xFF432931), secondaryContainer = Color(0xFF5C3F47), onSecondaryContainer = Color(0xFFFFD9E1),
+        tertiary = Color(0xFFDDB9F2), onTertiary = Color(0xFF3E1C50), tertiaryContainer = Color(0xFF572F68), onTertiaryContainer = Color(0xFFF4D9FF),
+        background = Color(0xFF1A1014), onBackground = Color(0xFFF2DEE3), surface = Color(0xFF1A1014), onSurface = Color(0xFFF2DEE3),
+        surfaceVariant = Color(0xFF514348), onSurfaceVariant = Color(0xFFD5C1C6), outline = Color(0xFF9E8C91)
+    ) else lightColorScheme(
+        primary = Color(0xFFA23D63), onPrimary = Color.White, primaryContainer = Color(0xFFFFD9E2), onPrimaryContainer = Color(0xFF3F001D),
+        secondary = Color(0xFF765660), onSecondary = Color.White, secondaryContainer = Color(0xFFFFD9E1), onSecondaryContainer = Color(0xFF2B151D),
+        tertiary = Color(0xFF76558F), onTertiary = Color.White, tertiaryContainer = Color(0xFFF4D9FF), onTertiaryContainer = Color(0xFF2C0B40),
+        background = Color(0xFFFFF8F9), onBackground = Color(0xFF21191C), surface = Color(0xFFFFF8F9), onSurface = Color(0xFF21191C),
+        surfaceVariant = Color(0xFFF3DDE2), onSurfaceVariant = Color(0xFF534347), outline = Color(0xFF857378)
+    )
+    "violet" -> if (dark) darkColorScheme(
+        primary = Color(0xFFD0BCFF), onPrimary = Color(0xFF381E72), primaryContainer = Color(0xFF4F378B), onPrimaryContainer = Color(0xFFEADDFF),
+        secondary = Color(0xFFCBC2DB), onSecondary = Color(0xFF332D3B), secondaryContainer = Color(0xFF4A4352), onSecondaryContainer = Color(0xFFE8DEF8),
+        tertiary = Color(0xFFF2B8E8), onTertiary = Color(0xFF4A2045), tertiaryContainer = Color(0xFF63375F), onTertiaryContainer = Color(0xFFFFD8F4),
+        background = Color(0xFF141218), onBackground = Color(0xFFE7E0E8), surface = Color(0xFF141218), onSurface = Color(0xFFE7E0E8),
+        surfaceVariant = Color(0xFF49454F), onSurfaceVariant = Color(0xFFCAC4D0), outline = Color(0xFF938F99)
+    ) else lightColorScheme(
+        primary = Color(0xFF6750A4), onPrimary = Color.White, primaryContainer = Color(0xFFEADDFF), onPrimaryContainer = Color(0xFF21005D),
+        secondary = Color(0xFF625B71), onSecondary = Color.White, secondaryContainer = Color(0xFFE8DEF8), onSecondaryContainer = Color(0xFF1D192B),
+        tertiary = Color(0xFF805080), onTertiary = Color.White, tertiaryContainer = Color(0xFFFFD8F4), onTertiaryContainer = Color(0xFF31102D),
+        background = Color(0xFFFFFBFE), onBackground = Color(0xFF1C1B1F), surface = Color(0xFFFFFBFE), onSurface = Color(0xFF1C1B1F),
+        surfaceVariant = Color(0xFFE7E0EC), onSurfaceVariant = Color(0xFF49454F), outline = Color(0xFF79747E)
+    )
+    else -> if (dark) darkColorScheme(
+        primary = Color(0xFFA8C7FA), onPrimary = Color(0xFF00315F), primaryContainer = Color(0xFF004A8F), onPrimaryContainer = Color(0xFFD9E8FF),
+        secondary = Color(0xFFBBC7E2), onSecondary = Color(0xFF263143), secondaryContainer = Color(0xFF3E475D), onSecondaryContainer = Color(0xFFDCE3F7),
+        tertiary = Color(0xFF82D3E5), onTertiary = Color(0xFF00363D), tertiaryContainer = Color(0xFF004F58), onTertiaryContainer = Color(0xFFB2EBF2),
+        background = Color(0xFF101418), onBackground = Color(0xFFE1E2E6), surface = Color(0xFF101418), onSurface = Color(0xFFE1E2E6),
+        surfaceVariant = Color(0xFF43474E), onSurfaceVariant = Color(0xFFC3C7CF), outline = Color(0xFF8D9199)
+    ) else lightColorScheme(
+        primary = Color(0xFF0969DA), onPrimary = Color.White, primaryContainer = Color(0xFFD9E8FF), onPrimaryContainer = Color(0xFF001A41),
+        secondary = Color(0xFF576680), onSecondary = Color.White, secondaryContainer = Color(0xFFDCE3F7), onSecondaryContainer = Color(0xFF141B2C),
+        tertiary = Color(0xFF006874), onTertiary = Color.White, tertiaryContainer = Color(0xFFB2EBF2), onTertiaryContainer = Color(0xFF001F24),
+        background = Color(0xFFFAFCFF), onBackground = Color(0xFF191C20), surface = Color(0xFFFAFCFF), onSurface = Color(0xFF191C20),
+        surfaceVariant = Color(0xFFE0E2EC), onSurfaceVariant = Color(0xFF43474E), outline = Color(0xFF737780)
+    )
+}
+
+@Composable
+private fun ThemeSettings(
+    themeMode: String,
+    colorSchemeKey: String,
+    onThemeModeChange: (String) -> Unit,
+    onColorSchemeChange: (String) -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text("主题与配色", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Text("显示模式", style = MaterialTheme.typography.labelLarge)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEach { (key, label) ->
+                FilterChip(selected = themeMode == key, onClick = { onThemeModeChange(key) }, label = { Text(label) })
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Text("配色方案", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(8.dp))
+        appPalettes.chunked(2).forEach { rowPalettes ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowPalettes.forEach { palette ->
+                    PaletteOption(palette, colorSchemeKey == palette.key, onClick = { onColorSchemeChange(palette.key) }, Modifier.weight(1f))
+                }
+                if (rowPalettes.size == 1) Spacer(Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+        Text("系统动态色需要 Android 12 或更高版本；旧系统将使用 GitHub Blue。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun PaletteOption(palette: AppPalette, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(16.dp)
+    Card(
+        modifier = modifier
+            .height(82.dp)
+            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+            .clickable(onClick = onClick),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(Modifier.fillMaxSize().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(palette.label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    listOf(palette.primary, palette.secondary, palette.tertiary).forEach { color ->
+                        Box(Modifier.size(14.dp).background(color, CircleShape))
+                    }
+                }
+            }
+            if (selected) Icon(Icons.Default.Check, contentDescription = "已选择", tint = MaterialTheme.colorScheme.primary)
+        }
+    }
 }
 
 @Composable
@@ -1128,7 +1309,14 @@ private fun ReaderScreen(note: Note, padding: androidx.compose.foundation.layout
 }
 
 @Composable
-private fun AboutScreen(context: Context, padding: androidx.compose.foundation.layout.PaddingValues) {
+private fun AboutScreen(
+    context: Context,
+    padding: androidx.compose.foundation.layout.PaddingValues,
+    themeMode: String,
+    colorSchemeKey: String,
+    onThemeModeChange: (String) -> Unit,
+    onColorSchemeChange: (String) -> Unit
+) {
     val prefs = context.getSharedPreferences("settings", 0)
     var token by remember { mutableStateOf(prefs.getString("github_token", "") ?: "") }
     var saved by remember { mutableStateOf(false) }
@@ -1146,6 +1334,8 @@ private fun AboutScreen(context: Context, padding: androidx.compose.foundation.l
         Text("Author: Zengkai001@gmail.com")
         Text("Version: ${BuildConfig.VERSION_NAME}")
         Spacer(Modifier.height(36.dp))
+        ThemeSettings(themeMode, colorSchemeKey, onThemeModeChange, onColorSchemeChange)
+        Spacer(Modifier.height(28.dp))
         Text("GitHub 发布配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(token, { token = it; saved = false }, Modifier.fillMaxWidth(), label = { Text("Fine-grained Token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
