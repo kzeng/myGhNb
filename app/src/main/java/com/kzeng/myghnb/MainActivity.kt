@@ -206,7 +206,7 @@ fun MyGhNbApp() {
                 }
             }, onOpen = { selected = it; screen = "reader" }, onEdit = { selected = it; screen = "editor" })
             "reader" -> ReaderScreenV2(selected ?: Note("", "", ""), darkTheme, padding)
-            "editor" -> EditorScreenV2(selected ?: Note("", "", ""), darkTheme, loading, padding, onSave = {
+            "editor" -> EditorScreenV2(selected ?: Note("", "", ""), darkTheme, loading, notes.flatMap { it.tags }, padding, onSave = {
                 notes = notes.filterNot { n -> n.fileName == it.fileName } + it
                 saveDrafts(context, notes)
                 selected = it
@@ -473,12 +473,12 @@ private fun EditorScreen(initial: Note, padding: androidx.compose.foundation.lay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
+private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolean, availableTags: List<String>, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
     val context = LocalContext.current
     var title by remember(initial.fileName) { mutableStateOf(initial.title) }
     var body by remember(initial.fileName) { mutableStateOf(initial.body) }
     var tags by remember(initial.fileName) { mutableStateOf(initial.tags) }
-    var tagOptions by remember(initial.fileName) { mutableStateOf((loadKnownTags(context) + initial.tags).distinct()) }
+    var tagOptions by remember(initial.fileName, availableTags) { mutableStateOf((loadKnownTags(context) + availableTags + initial.tags).distinct().sorted()) }
     var showTags by remember(initial.fileName) { mutableStateOf(false) }
     var newTag by remember(initial.fileName) { mutableStateOf("") }
     var mode by remember(initial.fileName) { mutableStateOf("visual") }
@@ -595,7 +595,7 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolea
                         Button(onClick = {
                             val tag = newTag.trim()
                             if (tag.isNotBlank()) {
-                                tagOptions = (tagOptions + tag).distinct()
+                                tagOptions = (tagOptions + tag).distinct().sorted()
                                 tags = (tags + tag).distinct()
                                 saveKnownTags(context, tagOptions)
                                 newTag = ""
