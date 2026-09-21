@@ -41,6 +41,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
@@ -235,25 +236,32 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
     var section by remember { mutableStateOf("all") }
     var query by remember { mutableStateOf("") }
     var selectedTag by remember { mutableStateOf<String?>(null) }
-    var page by remember(section, query, selectedTag, notes.size) { mutableStateOf(0) }
+    var selectedMonth by remember { mutableStateOf<String?>(null) }
+    var page by remember(section, query, selectedTag, selectedMonth, notes.size) { mutableStateOf(0) }
     val sorted = notes.sortedWith(compareByDescending<Note> { it.date }.thenByDescending { it.fileName })
     val allTags = sorted.flatMap { it.tags }.distinct().sorted()
+    val archiveMonths = sorted.map { it.date.take(7) }.filter { it.isNotBlank() }.distinct()
+    val archiveCounts = sorted.groupingBy { it.date.take(7) }.eachCount()
     val filtered = when (section) {
         "search" -> sorted.filter { query.isBlank() || it.title.contains(query, true) || it.body.contains(query, true) || it.fileName.contains(query, true) }
         "tags" -> sorted.filter { selectedTag == null || selectedTag in it.tags }
+        "archive" -> sorted.filter { selectedMonth != null && it.date.take(7) == selectedMonth }
         else -> sorted
     }
     val pageSize = 10
-    val pageCount = maxOf(1, (filtered.size + pageSize - 1) / pageSize)
+    val archiveIndex = section == "archive" && selectedMonth == null
+    val pageItemCount = if (archiveIndex) archiveMonths.size else filtered.size
+    val pageCount = maxOf(1, (pageItemCount + pageSize - 1) / pageSize)
     if (page >= pageCount) page = pageCount - 1
     val pageItems = filtered.drop(page * pageSize).take(pageSize)
+    val archivePageItems = archiveMonths.drop(page * pageSize).take(pageSize)
     Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            IconButton(onClick = { section = "all"; selectedTag = null }) { Icon(Icons.Default.MenuBook, contentDescription = "全部文章") }
-            IconButton(onClick = { section = "tags" }) { Icon(Icons.Default.Label, contentDescription = "标签") }
+            IconButton(onClick = { section = "all"; selectedTag = null; selectedMonth = null }) { Icon(Icons.Default.MenuBook, contentDescription = "全部文章") }
+            IconButton(onClick = { section = "tags"; selectedMonth = null }) { Icon(Icons.Default.Label, contentDescription = "标签") }
             IconButton(onClick = { section = "archive"; selectedTag = null }) { Icon(Icons.Default.Archive, contentDescription = "归档") }
-            IconButton(onClick = { section = "search" }) { Icon(Icons.Default.Search, contentDescription = "查找") }
+            IconButton(onClick = { section = "search"; selectedMonth = null }) { Icon(Icons.Default.Search, contentDescription = "查找") }
             if (loading) {
                 CircularProgressIndicator(Modifier.padding(12.dp).size(22.dp), strokeWidth = 2.dp)
             } else {
@@ -274,13 +282,32 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
                 allTags.forEach { tag -> OutlinedButton(onClick = { selectedTag = if (selectedTag == tag) null else tag }) { Text(tag) } }
             }
         }
-        Spacer(Modifier.height(10.dp))
-        if (pageItems.isEmpty()) Text("暂无匹配文章", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(pageItems) { note ->
-                ArticleCard(note, section == "archive", onOpen, onEdit)
+        if (section == "archive") {
+            Spacer(Modifier.height(8.dp))
+            if (selectedMonth == null) {
+                Text("按月份归档", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { selectedMonth = null }) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "返回归档月份")
+                    }
+                    Text("$selectedMonth · ${archiveCounts[selectedMonth] ?: 0} 篇", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                }
             }
         }
+        Spacer(Modifier.height(10.dp))
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (archiveIndex) {
+                items(archivePageItems) { month ->
+                    ArchiveMonthCard(month, archiveCounts[month] ?: 0) { selectedMonth = month }
+                }
+            } else {
+                items(pageItems) { note ->
+                    ArticleCard(note, false, onOpen, onEdit)
+                }
+            }
+        }
+        if (pageItemCount == 0) Text(if (archiveIndex) "暂无归档文章" else "暂无匹配文章", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(enabled = page > 0, onClick = { page-- }) { Text("上一页") }
             Text(" ${page + 1} / $pageCount ", modifier = Modifier.padding(horizontal = 8.dp))
@@ -330,6 +357,27 @@ private fun ArticleCard(note: Note, showMonth: Boolean, onOpen: (Note) -> Unit, 
                 Text("约 $readingMinutes 分钟", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                 IconButton(onClick = { onEdit(note) }) { Icon(Icons.Default.Edit, contentDescription = "编辑文章") }
             }
+        }
+    }
+}
+
+@Composable
+private fun ArchiveMonthCard(month: String, count: Int, onOpen: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onOpen),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.Archive, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(month, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("$count 篇文章", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Default.ArrowForward, contentDescription = null, modifier = Modifier.size(20.dp))
         }
     }
 }
