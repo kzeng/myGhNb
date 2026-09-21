@@ -1,18 +1,26 @@
 package com.kzeng.myghnb
 
+import android.Manifest
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Base64
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.CircleShape
@@ -53,11 +61,16 @@ import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,6 +106,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.imePadding
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -104,6 +119,16 @@ import java.net.HttpURLConnection
 import java.io.IOException
 import java.net.URL
 import java.time.LocalDate
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.nio.charset.StandardCharsets
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.SecretKey
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 
 data class Note(val fileName: String, val title: String, val date: String, val body: String = "", val sha: String? = null, val tags: List<String> = emptyList())
 
@@ -407,6 +432,78 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, padding: androidx.
     var newTag by remember(initial.fileName) { mutableStateOf("") }
     var mode by remember(initial.fileName) { mutableStateOf("visual") }
     var visualEditor by remember { mutableStateOf<WebView?>(null) }
+    var showAiPanel by remember { mutableStateOf(false) }
+    var aiPrompt by remember { mutableStateOf("") }
+    var aiOutput by remember { mutableStateOf("") }
+    var aiError by remember { mutableStateOf<String?>(null) }
+    var aiLoading by remember { mutableStateOf(false) }
+    var aiJob by remember { mutableStateOf<Job?>(null) }
+    val scope = rememberCoroutineScope()
+    val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { recognized ->
+            aiPrompt = if (aiPrompt.isBlank()) recognized else "$aiPrompt $recognized"
+        }
+    }
+    val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) voiceLauncher.launch(createVoiceIntent()) else aiError = "需要录音权限才能使用语音输入"
+    }
+
+    fun startVoiceInput() {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            aiError = "当前设备没有可用的语音识别服务"
+        } else if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            voiceLauncher.launch(createVoiceIntent())
+        } else {
+            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
+    fun startAiGeneration(contextBody: String) {
+        val prompt = aiPrompt.trim()
+        if (prompt.isBlank()) {
+            aiError = "请先输入想让 AI 完成的内容"
+            return
+        }
+        aiJob?.cancel()
+        aiOutput = ""
+        aiError = null
+        aiLoading = true
+        aiJob = scope.launch {
+            val result = DeepSeekClient.generate(context, prompt, title, tags, contextBody) { chunk ->
+                aiOutput += chunk
+            }
+            result.exceptionOrNull()?.let { aiError = it.message ?: "AI 生成失败" }
+            aiLoading = false
+            aiJob = null
+        }
+    }
+
+    fun generateAi() {
+        if (mode == "visual" && visualEditor != null) {
+            syncVisualToMarkdown(visualEditor!!) { latest ->
+                body = latest
+                startAiGeneration(latest)
+            }
+        } else {
+            startAiGeneration(body)
+        }
+    }
+
+    fun appendAiOutput() {
+        if (aiOutput.isBlank()) return
+        val append: (String) -> Unit = { latest ->
+            val merged = if (latest.isBlank()) aiOutput.trim() else latest.trimEnd() + "\n\n" + aiOutput.trim()
+            body = merged
+            if (mode == "visual") {
+                visualEditor?.loadDataWithBaseURL("https://kzeng.github.io/", markdownToHtml(merged, editable = true, dark = darkTheme), "text/html", "UTF-8", null)
+            }
+            aiOutput = ""
+            aiPrompt = ""
+            showAiPanel = false
+        }
+        if (mode == "visual" && visualEditor != null) syncVisualToMarkdown(visualEditor!!, append) else append(body)
+    }
+
     Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
         OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("标题") }, singleLine = true)
         Spacer(Modifier.height(10.dp))
@@ -417,6 +514,9 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, padding: androidx.
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(Modifier.size(4.dp))
                 Text("标签")
+            }
+            IconButton(onClick = { aiError = null; showAiPanel = true }) {
+                Icon(Icons.Default.AutoAwesome, contentDescription = "AI 写作")
             }
         }
         if (showTags) {
@@ -498,6 +598,101 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, padding: androidx.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onSave) }, Modifier.weight(1f)) { Icon(Icons.Default.Save, null); Spacer(Modifier.size(6.dp)); Text("保存草稿") }
             Button(onClick = { saveFromEditor(initial, title, body, tags, mode, visualEditor, onPublish) }, Modifier.weight(1f)) { Icon(Icons.Default.Send, null); Spacer(Modifier.size(6.dp)); Text("发布") }
+        }
+    }
+    if (showAiPanel) {
+        ModalBottomSheet(onDismissRequest = { if (!aiLoading) showAiPanel = false }) {
+            AiPromptSheet(
+                prompt = aiPrompt,
+                output = aiOutput,
+                error = aiError,
+                loading = aiLoading,
+                onPromptChange = { aiPrompt = it; aiError = null },
+                onVoice = ::startVoiceInput,
+                onGenerate = ::generateAi,
+                onCancel = { aiJob?.cancel(); aiLoading = false },
+                onAppend = ::appendAiOutput
+            )
+        }
+    }
+}
+
+@Composable
+private fun AiPromptSheet(
+    prompt: String,
+    output: String,
+    error: String?,
+    loading: Boolean,
+    onPromptChange: (String) -> Unit,
+    onVoice: () -> Unit,
+    onGenerate: () -> Unit,
+    onCancel: () -> Unit,
+    onAppend: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .imePadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.size(8.dp))
+            Text("AI 写作", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        }
+        Text(
+            "当前文章会作为上下文，AI 生成内容不会自动覆盖原文。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        OutlinedTextField(
+            value = prompt,
+            onValueChange = onPromptChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("告诉 AI 你想写什么") },
+            placeholder = { Text("例如：续写一段总结，保持 Markdown 格式") },
+            minLines = 3,
+            enabled = !loading,
+            trailingIcon = {
+                IconButton(onClick = onVoice, enabled = !loading) {
+                    Icon(Icons.Default.Mic, contentDescription = "语音输入")
+                }
+            }
+        )
+        if (loading) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        if (error != null) {
+            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        }
+        if (output.isNotBlank()) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("生成结果", style = MaterialTheme.typography.labelLarge)
+                    Spacer(Modifier.height(6.dp))
+                    Text(output, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (loading) {
+                OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.Stop, contentDescription = null)
+                    Spacer(Modifier.size(6.dp))
+                    Text("停止")
+                }
+            } else {
+                Button(onClick = onGenerate, enabled = prompt.isNotBlank(), modifier = Modifier.weight(1f)) {
+                    Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                    Spacer(Modifier.size(6.dp))
+                    Text("生成 Markdown")
+                }
+            }
+            if (output.isNotBlank() && !loading) {
+                Button(onClick = onAppend, modifier = Modifier.weight(1f)) { Text("追加到正文") }
+            }
         }
     }
 }
@@ -591,6 +786,129 @@ private fun saveFromEditor(initial: Note, title: String, body: String, tags: Lis
         callback(initial.copy(title = title, body = htmlToMarkdown(html), tags = tags))
     }
 }
+
+private fun createVoiceIntent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+    putExtra(RecognizerIntent.EXTRA_PROMPT, "请说出你想让 AI 完成的内容")
+}
+
+private object DeepSeekClient {
+    private const val endpoint = "https://api.deepseek.com/chat/completions"
+
+    suspend fun generate(
+        context: Context,
+        prompt: String,
+        title: String,
+        tags: List<String>,
+        body: String,
+        onChunk: suspend (String) -> Unit
+    ): Result<String> = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
+        try {
+            val token = loadSecret(context, "deepseek_token")
+            if (token.isBlank()) throw IOException("请先在 About 页面保存 DeepSeek Token")
+            connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 20_000
+                readTimeout = 120_000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer $token")
+                setRequestProperty("Content-Type", "application/json")
+                setRequestProperty("Accept", "text/event-stream")
+            }
+            val contextText = buildString {
+                appendLine("当前文章标题：$title")
+                appendLine("当前文章标签：${tags.joinToString("、")}")
+                appendLine("当前 Markdown 正文：")
+                appendLine(body)
+                appendLine()
+                appendLine("用户要求：")
+                appendLine(prompt)
+                appendLine()
+                appendLine("请只输出可以直接追加到文章末尾的 Markdown 内容，不要输出解释，不要使用 Markdown 代码围栏包裹结果。")
+            }
+            val messages = JSONArray()
+                .put(JSONObject().put("role", "system").put("content", "你是一个严谨的 Markdown 写作助手。输出必须是合法 Markdown。"))
+                .put(JSONObject().put("role", "user").put("content", contextText))
+            val payload = JSONObject()
+                .put("model", "deepseek-chat")
+                .put("messages", messages)
+                .put("stream", true)
+                .put("temperature", 0.7)
+            connection.outputStream.use { it.write(payload.toString().toByteArray(StandardCharsets.UTF_8)) }
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                val error = connection.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                throw IOException("DeepSeek API $responseCode: ${error.take(240)}")
+            }
+            val output = StringBuilder()
+            BufferedReader(InputStreamReader(connection.inputStream, StandardCharsets.UTF_8)).useLines { lines ->
+                lines.forEach { line ->
+                    if (!line.startsWith("data:")) return@forEach
+                    val data = line.removePrefix("data:").trim()
+                    if (data.isBlank() || data == "[DONE]") return@forEach
+                    val content = runCatching {
+                        JSONObject(data).optJSONArray("choices")?.optJSONObject(0)
+                            ?.optJSONObject("delta")?.optString("content").orEmpty()
+                    }.getOrDefault("")
+                    if (content.isNotEmpty()) {
+                        output.append(content)
+                        withContext(kotlinx.coroutines.Dispatchers.Main) { onChunk(content) }
+                    }
+                }
+            }
+            if (output.isBlank()) throw IOException("DeepSeek 没有返回 Markdown 内容")
+            Result.success(output.toString())
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            Result.failure(error)
+        } finally {
+            connection?.disconnect()
+        }
+    }
+}
+
+private const val secretKeyAlias = "myghnb_secret_key"
+
+private fun getSecretKey(): SecretKey {
+    val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    if (!keyStore.containsAlias(secretKeyAlias)) {
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                secretKeyAlias,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .build()
+        )
+        generator.generateKey()
+    }
+    return keyStore.getKey(secretKeyAlias, null) as SecretKey
+}
+
+private fun saveSecret(context: Context, name: String, value: String) {
+    if (value.isBlank()) {
+        context.getSharedPreferences("secure_settings", 0).edit().remove(name).apply()
+        return
+    }
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.ENCRYPT_MODE, getSecretKey())
+    val encrypted = cipher.iv + cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8))
+    context.getSharedPreferences("secure_settings", 0).edit()
+        .putString(name, Base64.encodeToString(encrypted, Base64.NO_WRAP)).apply()
+}
+
+private fun loadSecret(context: Context, name: String): String = runCatching {
+    val encoded = context.getSharedPreferences("secure_settings", 0).getString(name, null) ?: return ""
+    val encrypted = Base64.decode(encoded, Base64.NO_WRAP)
+    val iv = encrypted.copyOfRange(0, 12)
+    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+    cipher.init(Cipher.DECRYPT_MODE, getSecretKey(), GCMParameterSpec(128, iv))
+    String(cipher.doFinal(encrypted.copyOfRange(12, encrypted.size)), StandardCharsets.UTF_8)
+}.getOrDefault("")
 
 private fun markdownToHtml(markdown: String, editable: Boolean = false, dark: Boolean = false): String {
     val imageHtml = mutableListOf<String>()
@@ -763,14 +1081,19 @@ private fun AboutScreen(context: Context, padding: androidx.compose.foundation.l
     val prefs = context.getSharedPreferences("settings", 0)
     var token by remember { mutableStateOf(prefs.getString("github_token", "") ?: "") }
     var saved by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().padding(padding).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    var deepSeekToken by remember { mutableStateOf(loadSecret(context, "deepseek_token")) }
+    var deepSeekSaved by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().padding(padding).padding(28.dp).verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Image(painterResource(com.kzeng.myghnb.R.drawable.my_gh_nb_logo), "My GH Notebook", Modifier.size(112.dp))
         Spacer(Modifier.height(18.dp))
         Text("My GH Notebook", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text("GitHub + Notebook", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(32.dp))
         Text("Author: Zengkai001@gmail.com")
-        Text("Version: 0.0.1")
+        Text("Version: ${BuildConfig.VERSION_NAME}")
         Spacer(Modifier.height(36.dp))
         Text("GitHub 发布配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
@@ -778,6 +1101,22 @@ private fun AboutScreen(context: Context, padding: androidx.compose.foundation.l
         Spacer(Modifier.height(8.dp))
         Button(onClick = { prefs.edit().putString("github_token", token.trim()).apply(); saved = true }) { Text(if (saved) "已保存" else "保存 Token") }
         Text("Token 仅保存在本机，不会写入项目文件。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(28.dp))
+        Text("DeepSeek AI 配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            deepSeekToken,
+            { deepSeekToken = it; deepSeekSaved = false },
+            Modifier.fillMaxWidth(),
+            label = { Text("DeepSeek Token") },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true
+        )
+        Spacer(Modifier.height(8.dp))
+        Button(onClick = { saveSecret(context, "deepseek_token", deepSeekToken.trim()); deepSeekSaved = true }) {
+            Text(if (deepSeekSaved) "已保存" else "保存 DeepSeek Token")
+        }
+        Text("Token 使用 Android Keystore 加密保存在本机。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 

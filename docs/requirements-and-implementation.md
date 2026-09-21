@@ -197,3 +197,13 @@ $env:JAVA_HOME = "C:\Work\Apps\openjdk-17.0.0.1+2_windows-x64_bin\jdk-17.0.0.1"
 - 优先使用权限限制到单个仓库的 Fine-grained Token。
 - 图床网页登录由用户在网页中完成。
 - App 只处理用户主动复制回来的图片 URL 或 Markdown。
+
+## 9. DeepSeek AI 写作
+
+- 编辑器工具栏增加 AI 星光图标。
+- 点击后打开 Material 3 底部浮动面板，支持文本输入和 Android 语音输入。
+- 当前文章标题、标签和 Markdown 正文作为上下文发送给 DeepSeek。
+- 使用 DeepSeek Chat Completions 流式接口，要求返回 Markdown。
+- 生成结果先在面板中预览，用户确认后追加到正文末尾，不覆盖原文。
+- DeepSeek Token 在 About 页面配置，使用 Android Keystore 加密保存。
+- AI 服务错误、Token 缺失、语音权限和识别不可用时显示可恢复提示。
