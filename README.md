@@ -1,5 +1,7 @@
 # My GH Notebook
 
+![GH Notebook Logo](docs/gh-notebook-logo.png)
+
 Personal Android Markdown publishing tool for `kzeng/kzeng.github.io`.
 
 ## Current MVP
