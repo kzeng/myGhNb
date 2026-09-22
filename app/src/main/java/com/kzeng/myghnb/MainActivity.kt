@@ -20,6 +20,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -54,11 +55,10 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
@@ -153,6 +153,7 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MyGhNbApp() {
     val context = LocalContext.current
+    val activity = context as? ComponentActivity
     val settings = remember { context.getSharedPreferences("settings", 0) }
     val systemDarkTheme = isSystemInDarkTheme()
     val storedThemeMode = remember {
@@ -179,23 +180,29 @@ fun MyGhNbApp() {
     }
 
     MyGhNbTheme(darkTheme, colorSchemeKey, context) {
+    BackHandler(enabled = screen != "home" && screen != "editor") {
+        screen = "home"
+    }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        if (screen == "editor") "编辑文章" else if (screen == "about") "About" else "My GH Notebook",
+                        if (screen == "editor") "编辑文章" else if (screen == "settings") "配置" else if (screen == "about") "About" else "GH Notebook",
                         modifier = Modifier.padding(start = 4.dp),
                         fontWeight = FontWeight.SemiBold
                     )
                 },
-                navigationIcon = { if (screen != "home") IconButton(onClick = { screen = "home" }) { Icon(Icons.Default.ArrowBack, "返回") } },
+                navigationIcon = {
+                    if (screen != "home") {
+                        IconButton(onClick = { activity?.onBackPressedDispatcher?.onBackPressed() ?: run { screen = "home" } }) {
+                            Icon(Icons.Default.ArrowBack, "返回")
+                        }
+                    }
+                },
                 actions = { if (screen == "home") {
-                    IconButton(onClick = {
-                        themeMode = if (darkTheme) "light" else "dark"
-                        settings.edit().putString("theme_mode", themeMode).apply()
-                    }) { Icon(if (darkTheme) Icons.Default.LightMode else Icons.Default.DarkMode, "切换主题") }
+                    IconButton(onClick = { screen = "settings" }) { Icon(Icons.Default.Settings, "配置") }
                     IconButton(onClick = { screen = "about" }) { Icon(Icons.Default.Info, "About") }
                 } },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -241,8 +248,14 @@ fun MyGhNbApp() {
                     loading = false
                     snackbar.showSnackbar(if (ok) "草稿已保存，并已提交到 clash 分支" else "草稿已保存，但发布失败，请检查 GitHub Token")
                 }
+            }, onBack = { note ->
+                notes = notes.filterNot { n -> n.fileName == note.fileName } + note
+                saveDrafts(context, notes)
+                selected = note
+                screen = "home"
+                scope.launch { snackbar.showSnackbar("草稿已自动保存") }
             })
-            "about" -> AboutScreen(
+            "settings" -> SettingsScreen(
                 context = context,
                 padding = padding,
                 themeMode = themeMode,
@@ -256,6 +269,7 @@ fun MyGhNbApp() {
                     settings.edit().putString("color_scheme", it).apply()
                 }
             )
+            "about" -> AboutScreen(padding)
         }
     }
     }
@@ -439,7 +453,7 @@ private fun HomeScreenV3(notes: List<Note>, loading: Boolean, padding: androidx.
     if (page >= pageCount) page = pageCount - 1
     val pageItems = filtered.drop(page * pageSize).take(pageSize)
     val archivePageItems = archiveMonths.drop(page * pageSize).take(pageSize)
-    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             IconButton(onClick = { section = "all"; selectedTag = null; selectedMonth = null }) { Icon(Icons.Default.MenuBook, contentDescription = "全部文章") }
@@ -574,7 +588,7 @@ private fun HomeScreenV2(notes: List<Note>, loading: Boolean, padding: androidx.
     val pageCount = maxOf(1, (sorted.size + pageSize - 1) / pageSize)
     if (page >= pageCount) page = pageCount - 1
     val pageItems = sorted.drop(page * pageSize).take(pageSize)
-    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column { Text("你的文章", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("GitHub · clash", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -603,7 +617,7 @@ private fun HomeScreenV2(notes: List<Note>, loading: Boolean, padding: androidx.
 
 @Composable
 private fun HomeScreen(notes: List<Note>, loading: Boolean, padding: androidx.compose.foundation.layout.PaddingValues, onRefresh: () -> Unit, onOpen: (Note) -> Unit, onEdit: (Note) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp)) {
+    Column(Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp)) {
         Spacer(Modifier.height(18.dp))
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column { Text("你的文章", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("GitHub · clash", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -654,7 +668,7 @@ private fun EditorScreen(initial: Note, padding: androidx.compose.foundation.lay
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolean, availableTags: List<String>, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit) {
+private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolean, availableTags: List<String>, padding: androidx.compose.foundation.layout.PaddingValues, onSave: (Note) -> Unit, onPublish: (Note) -> Unit, onBack: (Note) -> Unit) {
     val context = LocalContext.current
     var title by remember(initial.fileName) { mutableStateOf(initial.title) }
     var body by remember(initial.fileName) { mutableStateOf(initial.body) }
@@ -670,6 +684,7 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolea
     var aiError by remember { mutableStateOf<String?>(null) }
     var aiLoading by remember { mutableStateOf(false) }
     var aiJob by remember { mutableStateOf<Job?>(null) }
+    var autoSaving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val voiceLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let { recognized ->
@@ -678,6 +693,27 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolea
     }
     val audioPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) voiceLauncher.launch(createVoiceIntent()) else aiError = "需要录音权限才能使用语音输入"
+    }
+
+    BackHandler {
+        when {
+            showAiPanel -> {
+                if (aiLoading) {
+                    aiJob?.cancel()
+                    aiLoading = false
+                } else {
+                    showAiPanel = false
+                }
+            }
+            showTags -> showTags = false
+            !autoSaving -> {
+                autoSaving = true
+                saveFromEditor(initial, title, body, tags, mode, visualEditor) { note ->
+                    autoSaving = false
+                    onBack(note)
+                }
+            }
+        }
     }
 
     fun startVoiceInput() {
@@ -833,7 +869,14 @@ private fun EditorScreenV2(initial: Note, darkTheme: Boolean, publishing: Boolea
         }
     }
     if (showAiPanel) {
-        ModalBottomSheet(onDismissRequest = { if (!aiLoading) showAiPanel = false }) {
+        ModalBottomSheet(onDismissRequest = {
+            if (aiLoading) {
+                aiJob?.cancel()
+                aiLoading = false
+            } else {
+                showAiPanel = false
+            }
+        }) {
             AiPromptSheet(
                 prompt = aiPrompt,
                 output = aiOutput,
@@ -1300,7 +1343,7 @@ private fun WebView.configureArticleWebView() {
 
 @Composable
 private fun ReaderScreen(note: Note, padding: androidx.compose.foundation.layout.PaddingValues) {
-    Column(Modifier.fillMaxSize().padding(padding).padding(20.dp)) {
+    Column(Modifier.fillMaxSize().padding(padding).padding(16.dp)) {
         Text(note.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
         Text(note.date, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(20.dp))
@@ -1309,7 +1352,7 @@ private fun ReaderScreen(note: Note, padding: androidx.compose.foundation.layout
 }
 
 @Composable
-private fun AboutScreen(
+private fun SettingsScreen(
     context: Context,
     padding: androidx.compose.foundation.layout.PaddingValues,
     themeMode: String,
@@ -1318,29 +1361,20 @@ private fun AboutScreen(
     onColorSchemeChange: (String) -> Unit
 ) {
     val prefs = context.getSharedPreferences("settings", 0)
-    var token by remember { mutableStateOf(prefs.getString("github_token", "") ?: "") }
-    var saved by remember { mutableStateOf(false) }
+    var githubToken by remember { mutableStateOf(prefs.getString("github_token", "") ?: "") }
+    var githubSaved by remember { mutableStateOf(false) }
     var deepSeekToken by remember { mutableStateOf(loadSecret(context, "deepseek_token")) }
     var deepSeekSaved by remember { mutableStateOf(false) }
     Column(
-        Modifier.fillMaxSize().padding(padding).padding(28.dp).verticalScroll(rememberScrollState()),
-        horizontalAlignment = Alignment.CenterHorizontally
+        Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())
     ) {
-        Image(painterResource(com.kzeng.myghnb.R.drawable.my_gh_nb_logo), "My GH Notebook", Modifier.size(112.dp))
-        Spacer(Modifier.height(18.dp))
-        Text("My GH Notebook", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("GitHub + Notebook", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(32.dp))
-        Text("Author: Zengkai001@gmail.com")
-        Text("Version: ${BuildConfig.VERSION_NAME}")
-        Spacer(Modifier.height(36.dp))
         ThemeSettings(themeMode, colorSchemeKey, onThemeModeChange, onColorSchemeChange)
         Spacer(Modifier.height(28.dp))
         Text("GitHub 发布配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(token, { token = it; saved = false }, Modifier.fillMaxWidth(), label = { Text("Fine-grained Token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+        OutlinedTextField(githubToken, { githubToken = it; githubSaved = false }, Modifier.fillMaxWidth(), label = { Text("Fine-grained Token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
         Spacer(Modifier.height(8.dp))
-        Button(onClick = { prefs.edit().putString("github_token", token.trim()).apply(); saved = true }) { Text(if (saved) "已保存" else "保存 Token") }
+        Button(onClick = { prefs.edit().putString("github_token", githubToken.trim()).apply(); githubSaved = true }) { Text(if (githubSaved) "已保存" else "保存 Token") }
         Text("Token 仅保存在本机，不会写入项目文件。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(28.dp))
         Text("DeepSeek AI 配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -1358,6 +1392,23 @@ private fun AboutScreen(
             Text(if (deepSeekSaved) "已保存" else "保存 DeepSeek Token")
         }
         Text("Token 使用 Android Keystore 加密保存在本机。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(28.dp))
+    }
+}
+
+@Composable
+private fun AboutScreen(padding: androidx.compose.foundation.layout.PaddingValues) {
+    Column(
+        Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Image(painterResource(com.kzeng.myghnb.R.drawable.my_gh_nb_logo), "GH Notebook", Modifier.size(112.dp))
+        Spacer(Modifier.height(18.dp))
+        Text("GH Notebook", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("GitHub + Notebook", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(32.dp))
+        Text("Author: Zengkai001@gmail.com")
+        Text("Version: ${BuildConfig.VERSION_NAME}")
     }
 }
 
