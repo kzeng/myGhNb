@@ -1,6 +1,6 @@
 # My GH Notebook
 
-![GH Notebook Logo](docs/gh-notebook-logo.png)
+<img src="docs/gh-notebook-logo.png" alt="GH Notebook Logo" width="20%" />
 
 Personal Android Markdown publishing tool for `kzeng/kzeng.github.io`.
 
