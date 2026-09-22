@@ -6,7 +6,8 @@
         android:label="GH Notebook"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.MyGhNb"
-        android:icon="@drawable/my_gh_nb_logo">
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

@@ -60,6 +60,8 @@ import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FormatBold
 import androidx.compose.material.icons.filled.FormatItalic
@@ -1365,33 +1367,55 @@ private fun SettingsScreen(
     var githubSaved by remember { mutableStateOf(false) }
     var deepSeekToken by remember { mutableStateOf(loadSecret(context, "deepseek_token")) }
     var deepSeekSaved by remember { mutableStateOf(false) }
+    var tokenSettingsExpanded by remember { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp).verticalScroll(rememberScrollState())
     ) {
         ThemeSettings(themeMode, colorSchemeKey, onThemeModeChange, onColorSchemeChange)
         Spacer(Modifier.height(28.dp))
-        Text("GitHub 发布配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(githubToken, { githubToken = it; githubSaved = false }, Modifier.fillMaxWidth(), label = { Text("Fine-grained Token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = { prefs.edit().putString("github_token", githubToken.trim()).apply(); githubSaved = true }) { Text(if (githubSaved) "已保存" else "保存 Token") }
-        Text("Token 仅保存在本机，不会写入项目文件。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(28.dp))
-        Text("DeepSeek AI 配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
-            deepSeekToken,
-            { deepSeekToken = it; deepSeekSaved = false },
-            Modifier.fillMaxWidth(),
-            label = { Text("DeepSeek Token") },
-            visualTransformation = PasswordVisualTransformation(),
-            singleLine = true
-        )
-        Spacer(Modifier.height(8.dp))
-        Button(onClick = { saveSecret(context, "deepseek_token", deepSeekToken.trim()); deepSeekSaved = true }) {
-            Text(if (deepSeekSaved) "已保存" else "保存 DeepSeek Token")
+        Card(
+            modifier = Modifier.fillMaxWidth().clickable { tokenSettingsExpanded = !tokenSettingsExpanded },
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Token 配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("GitHub / DeepSeek", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Icon(
+                    if (tokenSettingsExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (tokenSettingsExpanded) "收起 Token 配置" else "展开 Token 配置"
+                )
+            }
         }
-        Text("Token 使用 Android Keystore 加密保存在本机。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (tokenSettingsExpanded) {
+            Spacer(Modifier.height(16.dp))
+            Text("GitHub 发布配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(githubToken, { githubToken = it; githubSaved = false }, Modifier.fillMaxWidth(), label = { Text("Fine-grained Token") }, visualTransformation = PasswordVisualTransformation(), singleLine = true)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = { prefs.edit().putString("github_token", githubToken.trim()).apply(); githubSaved = true }) { Text(if (githubSaved) "已保存" else "保存 Token") }
+            Text("Token 仅保存在本机，不会写入项目文件。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(28.dp))
+            Text("DeepSeek AI 配置", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                deepSeekToken,
+                { deepSeekToken = it; deepSeekSaved = false },
+                Modifier.fillMaxWidth(),
+                label = { Text("DeepSeek Token") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = { saveSecret(context, "deepseek_token", deepSeekToken.trim()); deepSeekSaved = true }) {
+                Text(if (deepSeekSaved) "已保存" else "保存 DeepSeek Token")
+            }
+            Text("Token 使用 Android Keystore 加密保存在本机。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Spacer(Modifier.height(28.dp))
     }
 }
